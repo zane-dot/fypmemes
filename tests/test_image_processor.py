@@ -339,8 +339,8 @@ def test_extract_text_falls_back_to_pytesseract_when_easyocr_returns_empty(tmp_p
 
     import processors.image_processor as ip
     mock_reader = mock.MagicMock()
-    # All five EasyOCR passes return empty.
-    mock_reader.readtext.side_effect = [[], [], [], [], []]
+    # All seven EasyOCR passes return empty.
+    mock_reader.readtext.side_effect = [[], [], [], [], [], [], []]
 
     with mock.patch.object(ip, "_HAS_EASYOCR", True), \
          mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
@@ -396,4 +396,158 @@ def test_extract_text_easyocr_uses_min_size_2(tmp_path):
 
     first_call_kwargs = mock_reader.readtext.call_args_list[0].kwargs
     assert first_call_kwargs.get("min_size") == 2
+
+
+# ---------------------------------------------------------------------- #
+# New preprocessing function tests (equalized + saturation)
+# ---------------------------------------------------------------------- #
+
+def test_preprocess_for_ocr_equalized_returns_rgb_array(tmp_path):
+    """_preprocess_for_ocr_equalized returns a 3-channel numpy array."""
+    import numpy as np
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (300, 300), color=(200, 120, 140)).save(str(path))
+
+    arr = ip._preprocess_for_ocr_equalized(str(path))
+    assert isinstance(arr, np.ndarray)
+    assert arr.ndim == 3
+    assert arr.shape[2] == 3
+
+
+def test_preprocess_for_ocr_equalized_upscales_small_images(tmp_path):
+    """_preprocess_for_ocr_equalized upscales images below _OCR_MIN_DIM."""
+    import processors.image_processor as ip
+
+    path = tmp_path / "small.png"
+    Image.new("RGB", (200, 200), color=(180, 100, 120)).save(str(path))
+
+    arr = ip._preprocess_for_ocr_equalized(str(path))
+    assert arr.shape[0] >= ip._OCR_MIN_DIM
+    assert arr.shape[1] >= ip._OCR_MIN_DIM
+
+
+def test_preprocess_for_ocr_equalized_full_range(tmp_path):
+    """Histogram equalization spreads intensity across the available range."""
+    import numpy as np
+    import processors.image_processor as ip
+    from PIL import ImageDraw
+
+    path = tmp_path / "img.png"
+    # Build an image with two distinct brightness levels so there is
+    # real variation for the equaliser to work with.
+    img = Image.new("RGB", (300, 300), color=(60, 60, 60))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([50, 50, 250, 250], fill=(200, 200, 200))
+    img.save(str(path))
+
+    arr = ip._preprocess_for_ocr_equalized(str(path))
+    # After equalization the range should span more than the original ~140
+    # intensity units (60 vs 200); the min should be pushed lower and the
+    # max higher (or equal to 255).
+    assert isinstance(arr, np.ndarray)
+    assert arr.max() == 255
+
+
+def test_preprocess_for_ocr_saturation_returns_rgb_array(tmp_path):
+    """_preprocess_for_ocr_saturation returns a 3-channel numpy array."""
+    import numpy as np
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (300, 300), color=(200, 80, 120)).save(str(path))
+
+    arr = ip._preprocess_for_ocr_saturation(str(path))
+    assert isinstance(arr, np.ndarray)
+    assert arr.ndim == 3
+    assert arr.shape[2] == 3
+
+
+def test_preprocess_for_ocr_saturation_upscales_small_images(tmp_path):
+    """_preprocess_for_ocr_saturation upscales images below _OCR_MIN_DIM."""
+    import processors.image_processor as ip
+
+    path = tmp_path / "small.png"
+    Image.new("RGB", (200, 200), color=(200, 80, 120)).save(str(path))
+
+    arr = ip._preprocess_for_ocr_saturation(str(path))
+    assert arr.shape[0] >= ip._OCR_MIN_DIM
+    assert arr.shape[1] >= ip._OCR_MIN_DIM
+
+
+def test_preprocess_for_ocr_saturation_greyscale_image_is_zero(tmp_path):
+    """Greyscale (R=G=B) pixels produce zero saturation."""
+    import numpy as np
+    import processors.image_processor as ip
+
+    path = tmp_path / "grey.png"
+    # Perfect grey: R=G=B so max-min == 0 everywhere
+    Image.new("RGB", (300, 300), color=(128, 128, 128)).save(str(path))
+
+    arr = ip._preprocess_for_ocr_saturation(str(path))
+    assert arr.max() == 0
+
+
+def test_extract_text_uses_equalized_fallback(tmp_path):
+    """When the first five EasyOCR passes return empty, the equalized pass is tried."""
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(200, 100, 120)).save(str(path))
+
+    import processors.image_processor as ip
+    mock_reader = mock.MagicMock()
+    # Passes 1-5 return nothing; equalized pass (6th) returns text.
+    mock_reader.readtext.side_effect = [[], [], [], [], [], ["equalized text"]]
+
+    with mock.patch.object(ip, "_HAS_EASYOCR", True), \
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
+        result = extract_text(str(path))
+
+    assert result == "equalized text"
+    assert mock_reader.readtext.call_count == 6
+
+
+def test_extract_text_uses_saturation_fallback(tmp_path):
+    """When the first six EasyOCR passes return empty, the saturation pass is tried."""
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(200, 100, 120)).save(str(path))
+
+    import processors.image_processor as ip
+    mock_reader = mock.MagicMock()
+    # Passes 1-6 return nothing; saturation pass (7th) returns text.
+    mock_reader.readtext.side_effect = [[], [], [], [], [], [], ["saturation text"]]
+
+    with mock.patch.object(ip, "_HAS_EASYOCR", True), \
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
+        result = extract_text(str(path))
+
+    assert result == "saturation text"
+    assert mock_reader.readtext.call_count == 7
+
+
+def test_has_text_region_coloured_background_heuristic(tmp_path):
+    """has_text_region fires for moderate-contrast memes with coloured backgrounds.
+
+    A white-text-on-pink meme typically yields contrast ≈ 50–60 and
+    color_variance ≈ 45–55.  The old threshold (contrast > 60) missed this
+    common case; the new threshold (contrast > 35) catches it.
+    """
+    import processors.image_processor as ip
+    from PIL import ImageDraw
+
+    path = tmp_path / "pink_meme.png"
+
+    # Simulate a pink meme with a white text block (~30% of the image).
+    img = Image.new("RGB", (400, 400), color=(220, 100, 120))  # pink background
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([20, 50, 380, 200], fill=(255, 255, 255))  # white "text" band
+    img.save(str(path))
+
+    features = ip.extract_image_features(str(path))
+    # contrast should be ~55 and color_variance ~51 – both above the new thresholds
+    assert features["contrast"] > 35
+    assert features["color_variance"] > 40
+    assert features["has_text_region"] is True
 

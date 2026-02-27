@@ -8,7 +8,7 @@ import logging
 import os
 
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,54 @@ def _preprocess_for_ocr_binarised(image_path):
     return np.stack([binary, binary, binary], axis=-1)
 
 
+def _preprocess_for_ocr_equalized(image_path):
+    """Return a histogram-equalised grayscale numpy array for EasyOCR.
+
+    Histogram equalisation redistributes pixel intensities to span the full
+    0–255 range.  This dramatically improves contrast for memes where the text
+    and background share a similar average brightness, which is common on
+    coloured backgrounds (pink, beige, pastel, etc.) where a standard
+    luminance-based preprocessing leaves text nearly invisible.
+    """
+    img = Image.open(image_path).convert("L")
+
+    w, h = img.size
+    if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+        scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    img = ImageOps.equalize(img)
+    arr = np.array(img)
+    return np.stack([arr, arr, arr], axis=-1)
+
+
+def _preprocess_for_ocr_saturation(image_path):
+    """Return a per-pixel colour-saturation map as a numpy array for EasyOCR.
+
+    The saturation map measures the spread across RGB channels at each pixel
+    (max – min).  Pixels where one channel dominates look bright; uniform-grey
+    pixels look dark.  For memes with coloured text on a differently-coloured
+    background (e.g. red text on a pink background, yellow text on a
+    brown/beige background) the text edges become highly visible in this
+    representation even though standard greyscale conversion loses the contrast.
+    """
+    img = Image.open(image_path).convert("RGB")
+
+    w, h = img.size
+    if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+        scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    arr = np.array(img, dtype=np.float32)
+    # Per-pixel saturation: range of RGB values at each location
+    sat = arr.max(axis=-1) - arr.min(axis=-1)
+    if sat.max() > 0:
+        sat = (sat / sat.max() * 255).astype(np.uint8)
+    else:
+        sat = sat.astype(np.uint8)
+    return np.stack([sat, sat, sat], axis=-1)
+
+
 def _extract_text_via_vision(image_path):
     """Extract text from *image_path* using an OpenAI-compatible vision model.
 
@@ -228,7 +276,19 @@ def extract_text(image_path):
     1. **Vision API** – sends the image to an OpenAI-compatible vision model
        (e.g. ``gpt-4o`` or ``deepseek-vl2``).  Skipped when
        ``OPENAI_API_KEY`` is not set or the API call fails.
-    2. **EasyOCR** with image preprocessing (contrast, sharpening, upscaling).
+    2. **EasyOCR** with up to seven preprocessing passes, each targeting a
+       different class of meme imagery:
+
+       * Pass 1 – paragraph mode with standard preprocessing.
+       * Pass 2 – flat (non-paragraph) mode with standard preprocessing.
+       * Pass 3 – binarised image (robust for Impact-style white-on-dark text).
+       * Pass 4 – high-contrast (×3) image (low-contrast backgrounds).
+       * Pass 5 – inverted binarised image (light text on light backgrounds).
+       * Pass 6 – histogram-equalised greyscale (coloured/pastel backgrounds
+         where text and background share similar average brightness).
+       * Pass 7 – colour-saturation map (coloured text on a differently-
+         coloured background, e.g. red text on a pink background).
+
        Supports English and Simplified Chinese without an external binary.
     3. **pytesseract** – Tesseract-based fallback for environments where
        EasyOCR is not available.
@@ -314,6 +374,36 @@ def extract_text(image_path):
             text = " ".join(results_inv).strip()
             if text:
                 return text
+            # Sixth attempt: histogram-equalised image helps with low-contrast
+            # memes (pink/reddish/pastel backgrounds) where text and background
+            # share a similar average brightness.
+            img_eq = _preprocess_for_ocr_equalized(image_path)
+            results_eq = reader.readtext(
+                img_eq,
+                detail=0,
+                paragraph=False,
+                text_threshold=0.3,
+                low_text=0.3,
+                min_size=2,
+            )
+            text = " ".join(results_eq).strip()
+            if text:
+                return text
+            # Seventh attempt: colour-saturation map highlights text whose
+            # colour differs from the background (e.g. red text on pink) even
+            # when the luminance contrast is too low for other passes.
+            img_sat = _preprocess_for_ocr_saturation(image_path)
+            results_sat = reader.readtext(
+                img_sat,
+                detail=0,
+                paragraph=False,
+                text_threshold=0.3,
+                low_text=0.3,
+                min_size=2,
+            )
+            text = " ".join(results_sat).strip()
+            if text:
+                return text
         except Exception:
             logger.exception("EasyOCR failed for %s", image_path)
             # Fall through to the pytesseract fallback below.
@@ -387,8 +477,13 @@ def extract_image_features(image_path):
         ) / 3
 
         # Text-region heuristic --------------------------------------------
-        # High-contrast, wide variation often indicates text overlays
-        has_text_region = contrast > 60 and color_variance > 40
+        # High-contrast, wide variation often indicates text overlays.
+        # The contrast threshold is set to 35 (rather than 60) so that memes
+        # with moderate brightness contrast on coloured backgrounds (pink,
+        # reddish, pastel, etc.) are also correctly flagged.  A white-text-on-
+        # pink-background meme typically yields contrast ≈ 50–60 and
+        # color_variance ≈ 45–55, which was missed by the previous threshold.
+        has_text_region = contrast > 35 and color_variance > 40
 
         return {
             "width": width,
