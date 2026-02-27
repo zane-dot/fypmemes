@@ -95,6 +95,27 @@ def _preprocess_for_ocr(image_path):
     return np.array(img)
 
 
+def _preprocess_for_ocr_high_contrast(image_path):
+    """Return a high-contrast enhanced numpy array for EasyOCR.
+
+    Applies aggressive contrast enhancement (factor 3.0) with double sharpening
+    to improve text extraction from low-contrast meme images (e.g. text on
+    neutral or light-coloured backgrounds such as beige, white, or brown).
+    """
+    img = Image.open(image_path).convert("RGB")
+
+    w, h = img.size
+    if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+        scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    img = ImageEnhance.Contrast(img).enhance(3.0)
+    img = img.filter(ImageFilter.SHARPEN)
+    img = img.filter(ImageFilter.SHARPEN)
+
+    return np.array(img)
+
+
 def _preprocess_for_ocr_binarised(image_path):
     """Return a binarised (grayscale + median threshold) numpy array.
 
@@ -233,6 +254,7 @@ def extract_text(image_path):
                 text_threshold=0.3,
                 low_text=0.3,
                 adjust_contrast=0.5,
+                min_size=2,
             )
             text = " ".join(results).strip()
             if text:
@@ -246,11 +268,12 @@ def extract_text(image_path):
                 text_threshold=0.3,
                 low_text=0.3,
                 adjust_contrast=0.5,
+                min_size=2,
             )
             text = " ".join(results_flat).strip()
             if text:
                 return text
-            # Final EasyOCR attempt: binarised preprocessing is more robust
+            # Third EasyOCR attempt: binarised preprocessing is more robust
             # for meme-style text (e.g. white Impact font on a photo).
             img_bin = _preprocess_for_ocr_binarised(image_path)
             results_bin = reader.readtext(
@@ -259,13 +282,44 @@ def extract_text(image_path):
                 paragraph=False,
                 text_threshold=0.3,
                 low_text=0.3,
+                min_size=2,
             )
-            return " ".join(results_bin).strip()
+            text = " ".join(results_bin).strip()
+            if text:
+                return text
+            # Fourth attempt: high-contrast preprocessing helps with text on
+            # busy or low-contrast backgrounds (e.g. beige/brown meme images).
+            img_hc = _preprocess_for_ocr_high_contrast(image_path)
+            results_hc = reader.readtext(
+                img_hc,
+                detail=0,
+                paragraph=False,
+                text_threshold=0.3,
+                low_text=0.3,
+                min_size=2,
+            )
+            text = " ".join(results_hc).strip()
+            if text:
+                return text
+            # Fifth attempt: inverted binarised image handles light-coloured
+            # text on light backgrounds that the standard binarisation inverts.
+            results_inv = reader.readtext(
+                255 - img_bin,
+                detail=0,
+                paragraph=False,
+                text_threshold=0.3,
+                low_text=0.3,
+                min_size=2,
+            )
+            text = " ".join(results_inv).strip()
+            if text:
+                return text
         except Exception:
             logger.exception("EasyOCR failed for %s", image_path)
             # Fall through to the pytesseract fallback below.
 
     # 3. pytesseract fallback -----------------------------------------------
+    # Used when EasyOCR is unavailable OR when all EasyOCR passes return empty.
     if _HAS_TESSERACT:
         try:
             img = Image.open(image_path)
