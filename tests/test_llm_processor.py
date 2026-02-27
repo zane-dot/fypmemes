@@ -15,7 +15,8 @@ from processors.llm_processor import (
 class TestIsAvailable:
     def test_unavailable_without_key(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        assert is_available() is False or True  # depends on openai install
+        # Without an API key, is_available should return False
+        assert is_available() is False
 
     def test_available_with_key(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")

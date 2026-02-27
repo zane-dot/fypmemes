@@ -154,7 +154,8 @@ def _parse_response(raw):
     # Strip markdown code fences if the model wraps the output
     cleaned = raw.strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[-1]
+        lines = cleaned.split("\n", 1)
+        cleaned = lines[1] if len(lines) > 1 else ""
     if cleaned.endswith("```"):
         cleaned = cleaned.rsplit("```", 1)[0]
     cleaned = cleaned.strip()

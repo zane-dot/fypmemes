@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 
 def get_connection(db_path):
     """Return a sqlite3 connection with row-factory enabled."""
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    dirname = os.path.dirname(db_path)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
