@@ -3,9 +3,12 @@
 Handles image feature extraction and OCR text extraction from meme images.
 """
 
+import base64
 import logging
+import os
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageEnhance, ImageFilter
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +31,29 @@ try:
 except ImportError:
     _HAS_TESSERACT = False
 
+try:
+    from openai import OpenAI as _OpenAI
+
+    _HAS_OPENAI = True
+except ImportError:
+    _HAS_OPENAI = False
+
 # Module-level EasyOCR reader cache – initialised on first use so that the
 # heavy model download/load only happens when OCR is actually needed.
 _easyocr_reader = None
+
+# Minimum image dimension (pixels) for reliable OCR.  Images smaller than
+# this are upscaled before being fed to OCR engines.
+_OCR_MIN_DIM = 800
+
+# Contrast enhancement factor applied during preprocessing.
+_OCR_CONTRAST_FACTOR = 1.5
+
+# MIME type map for base64-encoded image data URIs sent to the vision API.
+_IMAGE_MIME_TYPES = {
+    "jpg": "jpeg", "jpeg": "jpeg", "png": "png",
+    "gif": "gif", "webp": "webp",
+}
 
 
 def _get_easyocr_reader():
@@ -46,30 +69,164 @@ def _get_easyocr_reader():
     return _easyocr_reader
 
 
+def _preprocess_for_ocr(image_path):
+    """Return a preprocessed numpy array of the image ready for EasyOCR.
+
+    Steps applied:
+    1. Upscale if either dimension is below ``_OCR_MIN_DIM`` (small images
+       confuse OCR engines).
+    2. Enhance contrast so text stands out from busy backgrounds.
+    3. Apply a mild sharpening pass to improve character edge clarity.
+    """
+    img = Image.open(image_path).convert("RGB")
+
+    # 1. Upscale small images -----------------------------------------------
+    w, h = img.size
+    if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+        scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    # 2. Contrast enhancement -----------------------------------------------
+    img = ImageEnhance.Contrast(img).enhance(_OCR_CONTRAST_FACTOR)
+
+    # 3. Sharpening ---------------------------------------------------------
+    img = img.filter(ImageFilter.SHARPEN)
+
+    return np.array(img)
+
+
+def _extract_text_via_vision(image_path):
+    """Extract text from *image_path* using an OpenAI-compatible vision model.
+
+    The model is selected from the ``OPENAI_VISION_MODEL`` environment variable
+    (falls back to ``OPENAI_MODEL``, then ``deepseek-chat``).  Set
+    ``OPENAI_VISION_MODEL`` to a vision-capable model such as ``gpt-4o`` or
+    ``deepseek-vl2`` to use this path.
+
+    Returns ``None`` when the API is not configured or the call fails, so the
+    caller can fall through to the next OCR backend.
+    """
+    if not _HAS_OPENAI:
+        return None
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        with open(image_path, "rb") as fh:
+            img_bytes = fh.read()
+    except OSError:
+        logger.warning("Vision OCR: cannot read file %s", image_path)
+        return None
+
+    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+    ext = image_path.rsplit(".", 1)[-1].lower()
+    mime = _IMAGE_MIME_TYPES.get(ext, "jpeg")
+
+    resolved_base = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+    resolved_model = (os.environ.get("OPENAI_VISION_MODEL")
+                      or os.environ.get("OPENAI_MODEL", "deepseek-chat"))
+
+    client_kwargs = {"api_key": api_key}
+    if resolved_base:
+        client_kwargs["base_url"] = resolved_base
+
+    client = _OpenAI(**client_kwargs)
+
+    try:
+        response = client.chat.completions.create(
+            model=resolved_model,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract all text visible in this meme image. "
+                            "Return only the extracted text with no extra "
+                            "commentary. If no text is present, return an "
+                            "empty string."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/{mime};base64,{img_b64}",
+                        },
+                    },
+                ],
+            }],
+            max_tokens=512,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception:
+        logger.warning("Vision API OCR failed for %s", image_path, exc_info=True)
+        return None
+
+
 def extract_text(image_path):
     """Extract text from a meme image using OCR.
 
-    Tries EasyOCR first (supports English **and** Chinese).  Falls back to
-    *pytesseract* (English-only) when EasyOCR is not installed.  Returns an
-    empty string when no OCR backend is available.
+    Pipeline (most-to-least accurate):
+    1. **Vision API** – sends the image to an OpenAI-compatible vision model
+       (e.g. ``gpt-4o`` or ``deepseek-vl2``).  Skipped when
+       ``OPENAI_API_KEY`` is not set or the API call fails.
+    2. **EasyOCR** with image preprocessing (contrast, sharpening, upscaling).
+       Supports English and Simplified Chinese without an external binary.
+    3. **pytesseract** – Tesseract-based fallback for environments where
+       EasyOCR is not available.
+
+    Returns an empty string when no OCR backend is available or all backends
+    fail.
     """
-    # --- EasyOCR (preferred) -------------------------------------------
+    # 1. Vision API (most accurate for memes) --------------------------------
+    vision_text = _extract_text_via_vision(image_path)
+    if vision_text is not None:
+        logger.debug("Vision API OCR succeeded for %s", image_path)
+        return vision_text
+
+    # 2. EasyOCR with preprocessing -----------------------------------------
     if _HAS_EASYOCR:
         try:
             reader = _get_easyocr_reader()
-            results = reader.readtext(image_path, detail=0)
-            return " ".join(results).strip()
+            img_array = _preprocess_for_ocr(image_path)
+            results = reader.readtext(
+                img_array,
+                detail=0,
+                paragraph=True,
+                text_threshold=0.5,
+                low_text=0.3,
+                adjust_contrast=0.5,
+            )
+            text = " ".join(results).strip()
+            if text:
+                return text
+            # If paragraph mode returned nothing, retry without paragraph
+            # grouping (sometimes paragraph=True misses isolated words).
+            results_flat = reader.readtext(
+                img_array,
+                detail=0,
+                paragraph=False,
+                text_threshold=0.5,
+                low_text=0.3,
+                adjust_contrast=0.5,
+            )
+            return " ".join(results_flat).strip()
         except Exception:
             logger.exception("EasyOCR failed for %s", image_path)
             # Fall through to the pytesseract fallback below.
 
-    # --- pytesseract fallback ------------------------------------------
+    # 3. pytesseract fallback -----------------------------------------------
     if _HAS_TESSERACT:
         try:
             img = Image.open(image_path)
+            # Apply the same preprocessing for consistency.
+            w, h = img.size
+            if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+                scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            img = ImageEnhance.Contrast(img).enhance(_OCR_CONTRAST_FACTOR)
             # Request both English and Chinese (simplified + traditional).
-            # Tesseract will silently skip language packs that are not
-            # installed, so this is safe even in minimal environments.
             text = pytesseract.image_to_string(img, lang="eng+chi_sim+chi_tra")
             return text.strip()
         except Exception:

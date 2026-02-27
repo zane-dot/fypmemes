@@ -108,14 +108,19 @@ def test_extract_text_uses_easyocr_when_available(tmp_path):
 
     import processors.image_processor as ip
     mock_reader = mock.MagicMock()
-    mock_reader.readtext.return_value = ["Hello", "world"]
+    # First call (paragraph=True) returns results; second call should not run.
+    mock_reader.readtext.side_effect = [["Hello", "world"]]
 
     with mock.patch.object(ip, "_HAS_EASYOCR", True), \
-         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader):
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
         result = extract_text(str(path))
 
     assert result == "Hello world"
-    mock_reader.readtext.assert_called_once_with(str(path), detail=0)
+    # readtext is called with a numpy array and paragraph=True first.
+    first_call_kwargs = mock_reader.readtext.call_args_list[0].kwargs
+    assert first_call_kwargs.get("paragraph") is True
+    assert first_call_kwargs.get("text_threshold") == 0.5
 
 
 def test_extract_text_easyocr_chinese(tmp_path):
@@ -125,10 +130,11 @@ def test_extract_text_easyocr_chinese(tmp_path):
 
     import processors.image_processor as ip
     mock_reader = mock.MagicMock()
-    mock_reader.readtext.return_value = ["你好", "世界"]
+    mock_reader.readtext.side_effect = [["你好", "世界"]]
 
     with mock.patch.object(ip, "_HAS_EASYOCR", True), \
-         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader):
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
         result = extract_text(str(path))
 
     assert result == "你好 世界"
@@ -143,6 +149,7 @@ def test_extract_text_falls_back_to_pytesseract_when_easyocr_unavailable(tmp_pat
 
     with mock.patch.object(ip, "_HAS_EASYOCR", False), \
          mock.patch.object(ip, "_HAS_TESSERACT", True), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None), \
          mock.patch("processors.image_processor.pytesseract") as mock_ts:
         mock_ts.image_to_string.return_value = "test text"
         result = extract_text(str(path))
@@ -162,8 +169,69 @@ def test_extract_text_returns_empty_when_no_backend(tmp_path):
     import processors.image_processor as ip
 
     with mock.patch.object(ip, "_HAS_EASYOCR", False), \
-         mock.patch.object(ip, "_HAS_TESSERACT", False):
+         mock.patch.object(ip, "_HAS_TESSERACT", False), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
         result = extract_text(str(path))
 
     assert result == ""
+
+
+def test_extract_text_vision_api_used_first(tmp_path):
+    """Vision API is tried before EasyOCR when the API key is configured."""
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
+
+    import processors.image_processor as ip
+
+    with mock.patch.object(ip, "_extract_text_via_vision", return_value="vision text") as mock_vision:
+        result = extract_text(str(path))
+
+    assert result == "vision text"
+    mock_vision.assert_called_once_with(str(path))
+
+
+def test_extract_text_vision_api_fallback_to_easyocr(tmp_path):
+    """When vision API returns None, EasyOCR is used as fallback."""
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
+
+    import processors.image_processor as ip
+    mock_reader = mock.MagicMock()
+    mock_reader.readtext.side_effect = [["easyocr text"]]
+
+    with mock.patch.object(ip, "_extract_text_via_vision", return_value=None), \
+         mock.patch.object(ip, "_HAS_EASYOCR", True), \
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader):
+        result = extract_text(str(path))
+
+    assert result == "easyocr text"
+
+
+def test_preprocess_for_ocr_upscales_small_images(tmp_path):
+    """Small images are upscaled before being fed to OCR."""
+    import numpy as np
+    import processors.image_processor as ip
+
+    path = tmp_path / "small.png"
+    Image.new("RGB", (200, 200), color=(128, 128, 128)).save(str(path))
+
+    arr = ip._preprocess_for_ocr(str(path))
+    # Should be upscaled to at least _OCR_MIN_DIM in both dimensions
+    assert arr.shape[0] >= ip._OCR_MIN_DIM
+    assert arr.shape[1] >= ip._OCR_MIN_DIM
+
+
+def test_extract_text_via_vision_returns_none_without_api_key(tmp_path):
+    """_extract_text_via_vision returns None when no OPENAI_API_KEY is set."""
+    import os
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
+
+    env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+    with mock.patch.dict(os.environ, env, clear=True):
+        result = ip._extract_text_via_vision(str(path))
+
+    assert result is None
 

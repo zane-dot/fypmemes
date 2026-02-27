@@ -6,7 +6,7 @@ An automated system that analyses both the visual and textual content of memes t
 
 ## Features
 
-- **Image Processing** – Extracts visual features (colours, contrast, text-region detection) and performs OCR via Tesseract to read embedded text.
+- **Image Processing** – Extracts visual features (colours, contrast, text-region detection) and performs OCR via a three-stage pipeline: (1) Vision API using a multimodal LLM, (2) EasyOCR with image preprocessing, (3) pytesseract fallback. Supports both English and Chinese text.
 - **Text Processing** – Analyses extracted text against a curated harmful-keyword database with regex pattern matching.
 - **LLM Analysis** – Sends extracted text and image features to an OpenAI-compatible LLM for deep contextual analysis (supports OpenAI, DeepSeek, and other compatible providers).
 - **Harmfulness Classification** – Produces a harmful / not-harmful verdict with a 0–1 score.
@@ -29,6 +29,10 @@ export OPENAI_API_KEY="sk-your-deepseek-key-here"
 # (Optional) Use a different provider / model
 # export OPENAI_BASE_URL="https://api.openai.com/v1"
 # export OPENAI_MODEL="gpt-4o-mini"
+
+# (Optional) Use a vision-capable model for more accurate OCR text extraction
+# export OPENAI_VISION_MODEL="gpt-4o"         # OpenAI
+# export OPENAI_VISION_MODEL="deepseek-vl2"   # DeepSeek
 
 # 4. Run the application
 python app.py
@@ -68,9 +72,10 @@ python -m pytest tests/ -v
 
 ## Configuration
 
-| Environment Variable | Description                              | Default                          |
-|---------------------|------------------------------------------|----------------------------------|
-| `OPENAI_API_KEY`    | DeepSeek (or compatible) API key         | *(none)*                         |
-| `OPENAI_BASE_URL`   | API base URL                             | `https://api.deepseek.com`       |
-| `OPENAI_MODEL`      | Model name to use                        | `deepseek-chat`                  |
-| `SECRET_KEY`        | Flask session secret                     | dev default                      |
+| Environment Variable   | Description                                                   | Default                          |
+|-----------------------|---------------------------------------------------------------|----------------------------------|
+| `OPENAI_API_KEY`      | DeepSeek (or compatible) API key                              | *(none)*                         |
+| `OPENAI_BASE_URL`     | API base URL                                                  | `https://api.deepseek.com`       |
+| `OPENAI_MODEL`        | Model name for text-based LLM analysis                        | `deepseek-chat`                  |
+| `OPENAI_VISION_MODEL` | Vision model for OCR (e.g. `gpt-4o`, `deepseek-vl2`). When set, the vision model is used as the **primary** OCR engine for superior accuracy on memes with English or Chinese text. Falls back to EasyOCR when unset. | *(none, uses EasyOCR)* |
+| `SECRET_KEY`          | Flask session secret                                          | dev default                      |
