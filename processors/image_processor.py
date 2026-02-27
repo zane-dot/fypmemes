@@ -95,6 +95,37 @@ def _preprocess_for_ocr(image_path):
     return np.array(img)
 
 
+def _preprocess_for_ocr_binarised(image_path):
+    """Return a binarised (grayscale + median threshold) numpy array.
+
+    Meme text is often rendered in a high-contrast style (e.g. white Impact
+    font with a dark outline) that is well-suited to binarisation.  This
+    variant is used as a second-pass attempt when the standard preprocessing
+    fails to extract any text.
+    """
+    img = Image.open(image_path).convert("RGB")
+
+    # Upscale as before
+    w, h = img.size
+    if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+        scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    # Convert to grayscale, enhance contrast, then apply a global median
+    # threshold to produce a clean black-and-white image.  The median is a
+    # robust centre-point for meme images where the background and foreground
+    # pixel populations are roughly balanced.
+    gray = img.convert("L")
+    gray = ImageEnhance.Contrast(gray).enhance(2.0)
+    gray = gray.filter(ImageFilter.SHARPEN)
+    arr = np.array(gray)
+    # Simple global threshold at the median value
+    threshold = int(np.median(arr))
+    binary = (arr > threshold).astype(np.uint8) * 255
+    # Return as RGB array (EasyOCR accepts both grayscale and RGB)
+    return np.stack([binary, binary, binary], axis=-1)
+
+
 def _extract_text_via_vision(image_path):
     """Extract text from *image_path* using an OpenAI-compatible vision model.
 
@@ -123,9 +154,14 @@ def _extract_text_via_vision(image_path):
     ext = image_path.rsplit(".", 1)[-1].lower()
     mime = _IMAGE_MIME_TYPES.get(ext, "jpeg")
 
+    # Only proceed when a vision-capable model is explicitly configured.
+    # Falling back to a text-only model (e.g. deepseek-chat) would cause the
+    # API call to fail because it cannot process image inputs.
+    resolved_model = os.environ.get("OPENAI_VISION_MODEL")
+    if not resolved_model:
+        return None
+
     resolved_base = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
-    resolved_model = (os.environ.get("OPENAI_VISION_MODEL")
-                      or os.environ.get("OPENAI_MODEL", "deepseek-chat"))
 
     client_kwargs = {"api_key": api_key}
     if resolved_base:
@@ -194,7 +230,7 @@ def extract_text(image_path):
                 img_array,
                 detail=0,
                 paragraph=True,
-                text_threshold=0.5,
+                text_threshold=0.3,
                 low_text=0.3,
                 adjust_contrast=0.5,
             )
@@ -207,11 +243,24 @@ def extract_text(image_path):
                 img_array,
                 detail=0,
                 paragraph=False,
-                text_threshold=0.5,
+                text_threshold=0.3,
                 low_text=0.3,
                 adjust_contrast=0.5,
             )
-            return " ".join(results_flat).strip()
+            text = " ".join(results_flat).strip()
+            if text:
+                return text
+            # Final EasyOCR attempt: binarised preprocessing is more robust
+            # for meme-style text (e.g. white Impact font on a photo).
+            img_bin = _preprocess_for_ocr_binarised(image_path)
+            results_bin = reader.readtext(
+                img_bin,
+                detail=0,
+                paragraph=False,
+                text_threshold=0.3,
+                low_text=0.3,
+            )
+            return " ".join(results_bin).strip()
         except Exception:
             logger.exception("EasyOCR failed for %s", image_path)
             # Fall through to the pytesseract fallback below.

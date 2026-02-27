@@ -120,7 +120,7 @@ def test_extract_text_uses_easyocr_when_available(tmp_path):
     # readtext is called with a numpy array and paragraph=True first.
     first_call_kwargs = mock_reader.readtext.call_args_list[0].kwargs
     assert first_call_kwargs.get("paragraph") is True
-    assert first_call_kwargs.get("text_threshold") == 0.5
+    assert first_call_kwargs.get("text_threshold") == 0.3
 
 
 def test_extract_text_easyocr_chinese(tmp_path):
@@ -234,4 +234,62 @@ def test_extract_text_via_vision_returns_none_without_api_key(tmp_path):
         result = ip._extract_text_via_vision(str(path))
 
     assert result is None
+
+
+def test_extract_text_via_vision_returns_none_without_vision_model(tmp_path):
+    """_extract_text_via_vision returns None when OPENAI_VISION_MODEL is not set.
+
+    Using a text-only model (e.g. deepseek-chat) as a vision model would fail;
+    the function must skip the API call when no vision model is configured.
+    """
+    import os
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
+
+    env = {k: v for k, v in os.environ.items() if k != "OPENAI_VISION_MODEL"}
+    env["OPENAI_API_KEY"] = "test-key"
+    with mock.patch.dict(os.environ, env, clear=True), \
+         mock.patch.object(ip, "_HAS_OPENAI", True):
+        result = ip._extract_text_via_vision(str(path))
+
+    assert result is None
+
+
+def test_preprocess_for_ocr_binarised_returns_rgb_array(tmp_path):
+    """_preprocess_for_ocr_binarised returns an RGB numpy array."""
+    import numpy as np
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (300, 300), color=(200, 200, 200)).save(str(path))
+
+    arr = ip._preprocess_for_ocr_binarised(str(path))
+    assert isinstance(arr, np.ndarray)
+    # Shape should be (height, width, 3)
+    assert arr.ndim == 3
+    assert arr.shape[2] == 3
+    # Values should be strictly binary (0 or 255)
+    unique_vals = set(arr.flatten().tolist())
+    assert unique_vals <= {0, 255}
+
+
+def test_extract_text_uses_binarised_fallback_when_standard_empty(tmp_path):
+    """When standard EasyOCR passes return empty, the binarised pass is tried."""
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
+
+    import processors.image_processor as ip
+    mock_reader = mock.MagicMock()
+    # First two calls (paragraph + flat) return nothing; binarised pass returns text.
+    mock_reader.readtext.side_effect = [[], [], ["binarised text"]]
+
+    with mock.patch.object(ip, "_HAS_EASYOCR", True), \
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
+        result = extract_text(str(path))
+
+    assert result == "binarised text"
+    assert mock_reader.readtext.call_count == 3
 
