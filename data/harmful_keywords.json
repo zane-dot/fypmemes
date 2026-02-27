@@ -1,0 +1,86 @@
+{
+  "categories": {
+    "hate_speech": {
+      "label": "Hate Speech",
+      "description": "Content that promotes hatred or discrimination against individuals or groups based on race, ethnicity, religion, gender, sexual orientation, or disability.",
+      "keywords": [
+        "racial slur", "go back to your country", "subhuman", "inferior race",
+        "white power", "ethnic cleansing", "gas the", "lynch",
+        "sand n", "towelhead", "wetback", "beaner", "chink", "gook",
+        "spic", "kike", "coon", "negro", "nigger", "nigga",
+        "faggot", "tranny", "retard", "mongol"
+      ],
+      "patterns": [
+        "all \\w+ are (criminals|terrorists|rapists|thieves|lazy|stupid|dirty|evil)",
+        "kill all \\w+",
+        "deport all \\w+",
+        "(whites?|blacks?|jews?|muslims?) should (die|burn|leave|be killed)",
+        "\\w+ supremacy"
+      ],
+      "severity": 0.9
+    },
+    "violence": {
+      "label": "Violence / Threats",
+      "description": "Content that promotes, glorifies, or incites violence against individuals or groups.",
+      "keywords": [
+        "kill yourself", "kys", "shoot up", "bomb threat", "mass shooting",
+        "school shooting", "murder them", "slit throat", "stab",
+        "beat up", "curb stomp", "execute", "hang them", "behead",
+        "genocide", "massacre", "bloodbath", "slaughter them"
+      ],
+      "patterns": [
+        "i('ll|\\s+will) (kill|murder|shoot|stab|hurt) (you|them|him|her)",
+        "(should|deserve to) (die|be killed|be shot|be beaten)",
+        "put a bullet in",
+        "blow (up|them up)",
+        "(going to|gonna) (shoot|kill|hurt|attack)"
+      ],
+      "severity": 0.95
+    },
+    "cyberbullying": {
+      "label": "Cyberbullying / Harassment",
+      "description": "Content intended to harass, intimidate, or demean specific individuals.",
+      "keywords": [
+        "ugly", "fat pig", "loser", "worthless", "nobody likes you",
+        "kill yourself", "no one cares", "waste of space", "piece of trash",
+        "die already", "attention seeker", "pathetic", "disgusting"
+      ],
+      "patterns": [
+        "you (are|look|smell) (like )?(garbage|trash|ugly|disgusting|pathetic|fat|stupid)",
+        "nobody (likes|loves|wants|cares about) you",
+        "the world (would be|is) better without you",
+        "you should (just )?(die|disappear|kill yourself)"
+      ],
+      "severity": 0.8
+    },
+    "sexual_content": {
+      "label": "Sexual / Explicit Content",
+      "description": "Sexually explicit or suggestive content that is inappropriate or non-consensual.",
+      "keywords": [
+        "rape", "molest", "pedophile", "child porn", "revenge porn",
+        "sexual assault", "grope", "flash", "upskirt", "creepshot"
+      ],
+      "patterns": [
+        "(she|he|they) (deserved|wanted|asked for) (it|the rape|to be raped)",
+        "underage",
+        "(send|show) (me )?(nudes|pics)"
+      ],
+      "severity": 0.95
+    },
+    "self_harm": {
+      "label": "Self-Harm / Suicide",
+      "description": "Content that promotes, encourages, or glorifies self-harm or suicide.",
+      "keywords": [
+        "cut yourself", "self harm", "suicide method", "how to die",
+        "overdose", "end it all", "jump off", "hang yourself",
+        "slit wrists", "drink bleach"
+      ],
+      "patterns": [
+        "(just|you should) (end it|kill yourself|do it|jump)",
+        "no (reason|point) (to|in) (live|living|life)",
+        "(life|world) (is )?(not worth|meaningless|pointless)"
+      ],
+      "severity": 0.9
+    }
+  }
+}
