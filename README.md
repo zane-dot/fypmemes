@@ -23,12 +23,12 @@ pip install -r requirements.txt
 #    Ubuntu/Debian: sudo apt install tesseract-ocr
 #    macOS:         brew install tesseract
 
-# 3. Set your LLM API key (required for LLM-powered analysis)
-export OPENAI_API_KEY="sk-your-key-here"
+# 3. Set your DeepSeek API key (required for LLM-powered analysis)
+export OPENAI_API_KEY="sk-your-deepseek-key-here"
 
 # (Optional) Use a different provider / model
-# export OPENAI_BASE_URL="https://api.deepseek.com/v1"
-# export OPENAI_MODEL="deepseek-chat"
+# export OPENAI_BASE_URL="https://api.openai.com/v1"
+# export OPENAI_MODEL="gpt-4o-mini"
 
 # 4. Run the application
 python app.py
@@ -68,9 +68,9 @@ python -m pytest tests/ -v
 
 ## Configuration
 
-| Environment Variable | Description                              | Default        |
-|---------------------|------------------------------------------|----------------|
-| `OPENAI_API_KEY`    | API key for LLM provider                 | *(none)*       |
-| `OPENAI_BASE_URL`   | Custom API base URL                      | *(OpenAI default)* |
-| `OPENAI_MODEL`      | Model name to use                        | `gpt-4o-mini`  |
-| `SECRET_KEY`        | Flask session secret                     | dev default    |
+| Environment Variable | Description                              | Default                          |
+|---------------------|------------------------------------------|----------------------------------|
+| `OPENAI_API_KEY`    | DeepSeek (or compatible) API key         | *(none)*                         |
+| `OPENAI_BASE_URL`   | API base URL                             | `https://api.deepseek.com`       |
+| `OPENAI_MODEL`      | Model name to use                        | `deepseek-chat`                  |
+| `SECRET_KEY`        | Flask session secret                     | dev default                      |

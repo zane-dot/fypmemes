@@ -61,8 +61,8 @@ def analyse_meme(extracted_text, image_features, *, model=None, base_url=None):
         return None
 
     api_key = os.environ["OPENAI_API_KEY"]
-    resolved_base = base_url or os.environ.get("OPENAI_BASE_URL")
-    resolved_model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    resolved_base = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+    resolved_model = model or os.environ.get("OPENAI_MODEL", "deepseek-chat")
 
     client_kwargs = {"api_key": api_key}
     if resolved_base:
