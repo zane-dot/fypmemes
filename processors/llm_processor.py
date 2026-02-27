@@ -12,11 +12,18 @@ When no API key is configured the module returns ``None`` so the caller
 can fall back to the keyword-based classifier.
 """
 
+import base64
 import json
 import logging
 import os
 
 logger = logging.getLogger(__name__)
+
+# MIME type map for base64-encoded image data URIs sent to the vision API.
+_IMAGE_MIME_TYPES = {
+    "jpg": "jpeg", "jpeg": "jpeg", "png": "png",
+    "gif": "gif", "webp": "webp",
+}
 
 try:
     from openai import OpenAI
@@ -33,6 +40,18 @@ except ImportError:
 def is_available():
     """Return True when the LLM backend is usable."""
     return _HAS_OPENAI and bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def is_vision_available():
+    """Return True when a vision-capable model is configured.
+
+    Requires both ``OPENAI_API_KEY`` and ``OPENAI_VISION_MODEL`` to be set.
+    """
+    return (
+        _HAS_OPENAI
+        and bool(os.environ.get("OPENAI_API_KEY"))
+        and bool(os.environ.get("OPENAI_VISION_MODEL"))
+    )
 
 
 def analyse_meme(extracted_text, image_features, *, model=None, base_url=None):
@@ -86,6 +105,101 @@ def analyse_meme(extracted_text, image_features, *, model=None, base_url=None):
         return _parse_response(content)
     except Exception:
         logger.exception("LLM analysis failed")
+        return None
+
+
+def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url=None):
+    """Analyse meme content by sending the image directly to a vision LLM.
+
+    This approach is used by many harmful-meme detection platforms because it
+    bypasses the OCR step entirely: the vision model can read text embedded in
+    the image and reason about both the visual content and that text in one
+    pass.  It is particularly effective for memes with low-contrast text on
+    neutral backgrounds (e.g. white, beige, or brown) that confuse traditional
+    OCR pipelines.
+
+    Parameters
+    ----------
+    image_path : str
+        Absolute path to the meme image file.
+    image_features : dict
+        Visual features produced by
+        :func:`processors.image_processor.extract_image_features`.
+    model : str | None
+        Override the vision model name (defaults to ``OPENAI_VISION_MODEL``).
+    base_url : str | None
+        Override the API base URL (defaults to ``OPENAI_BASE_URL``).
+
+    Returns
+    -------
+    dict | None
+        ``None`` when the vision backend is unavailable or the call fails,
+        otherwise a dict with: ``is_harmful``, ``harm_score``, ``categories``,
+        ``justification``.
+    """
+    if not is_vision_available():
+        logger.info("Vision LLM backend unavailable – skipping vision analysis")
+        return None
+
+    try:
+        with open(image_path, "rb") as fh:
+            img_bytes = fh.read()
+    except OSError:
+        logger.warning("Vision analysis: cannot read file %s", image_path)
+        return None
+
+    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+    ext = image_path.rsplit(".", 1)[-1].lower()
+    mime = _IMAGE_MIME_TYPES.get(ext, "jpeg")
+
+    api_key = os.environ["OPENAI_API_KEY"]
+    resolved_model = model or os.environ.get("OPENAI_VISION_MODEL")
+    resolved_base = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+
+    client_kwargs = {"api_key": api_key}
+    if resolved_base:
+        client_kwargs["base_url"] = resolved_base
+
+    client = OpenAI(**client_kwargs)
+
+    features_text = "\n".join(f"- {k}: {v}" for k, v in image_features.items())
+
+    try:
+        response = client.chat.completions.create(
+            model=resolved_model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Analyse the following meme image for harmful content. "
+                                "Read all text visible in the image and consider both "
+                                "the visual content and any embedded text.\n\n"
+                                "## Image features\n"
+                                f"{features_text}\n\n"
+                                "Please classify this meme and provide your detailed "
+                                "justification."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/{mime};base64,{img_b64}",
+                            },
+                        },
+                    ],
+                },
+            ],
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        content = response.choices[0].message.content
+        return _parse_response(content)
+    except Exception:
+        logger.exception("Vision-based meme analysis failed for %s", image_path)
         return None
 
 

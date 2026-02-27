@@ -123,6 +123,77 @@ class TestClassifyWithLLM:
         assert result["analysis_method"] == "keyword"
 
 
+class TestClassifyWithVision:
+    """classify() should prefer vision analysis when image_path is provided."""
+
+    def test_vision_result_used_when_available(self, monkeypatch, tmp_path):
+        from PIL import Image
+        path = tmp_path / "meme.png"
+        Image.new("RGB", (200, 200)).save(str(path))
+
+        monkeypatch.setattr("models.classifier.llm_vision_available", lambda: True)
+        fake_vision = {
+            "is_harmful": True,
+            "harm_score": 0.9,
+            "categories": ["Violence / Threats"],
+            "justification": "Vision model detected harmful content.",
+        }
+        monkeypatch.setattr(
+            "models.classifier.analyse_meme_with_vision",
+            lambda *a, **kw: fake_vision,
+        )
+        result = classify(
+            _safe_text_result(), _basic_features(),
+            extracted_text="", image_path=str(path),
+        )
+        assert result["is_harmful"] is True
+        assert result["analysis_method"] == "llm"
+        assert "Vision model" in result["justification"]
+
+    def test_vision_none_falls_back_to_text_llm(self, monkeypatch, tmp_path):
+        from PIL import Image
+        path = tmp_path / "meme.png"
+        Image.new("RGB", (200, 200)).save(str(path))
+
+        monkeypatch.setattr("models.classifier.llm_vision_available", lambda: True)
+        monkeypatch.setattr(
+            "models.classifier.analyse_meme_with_vision",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr("models.classifier.llm_available", lambda: True)
+        fake_llm = {
+            "is_harmful": False,
+            "harm_score": 0.1,
+            "categories": [],
+            "justification": "Text LLM says safe.",
+        }
+        monkeypatch.setattr(
+            "models.classifier.analyse_meme",
+            lambda *a, **kw: fake_llm,
+        )
+        result = classify(
+            _safe_text_result(), _basic_features(),
+            extracted_text="some text", image_path=str(path),
+        )
+        assert result["analysis_method"] == "llm"
+        assert "Text LLM" in result["justification"]
+
+    def test_no_image_path_skips_vision(self, monkeypatch):
+        """classify() skips vision analysis when image_path is None."""
+        vision_called = []
+
+        def _fake_vision(*a, **kw):
+            vision_called.append(1)
+            return {"is_harmful": False, "harm_score": 0.0,
+                    "categories": [], "justification": "x"}
+
+        monkeypatch.setattr("models.classifier.llm_vision_available", lambda: True)
+        monkeypatch.setattr("models.classifier.analyse_meme_with_vision", _fake_vision)
+        monkeypatch.setattr("models.classifier.llm_available", lambda: False)
+        classify(_safe_text_result(), _basic_features())
+        assert vision_called == [], "Vision should not be called without image_path"
+
+
 class TestBuildJustification:
     def test_safe_justification(self):
         j = _build_justification(False, 0.0, [], _basic_features())

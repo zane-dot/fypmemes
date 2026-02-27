@@ -16,12 +16,17 @@ The final output always contains:
 import json
 import logging
 
-from processors.llm_processor import analyse_meme, is_available as llm_available
+from processors.llm_processor import (
+    analyse_meme,
+    analyse_meme_with_vision,
+    is_available as llm_available,
+    is_vision_available as llm_vision_available,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def classify(text_result, image_features, extracted_text=""):
+def classify(text_result, image_features, extracted_text="", image_path=None):
     """Classify a meme and generate a justification.
 
     Parameters
@@ -32,19 +37,32 @@ def classify(text_result, image_features, extracted_text=""):
         Output of :func:`processors.image_processor.extract_image_features`.
     extracted_text : str
         Raw OCR text (passed through to the LLM for richer analysis).
+    image_path : str | None
+        Absolute path to the original meme image.  When provided and a
+        vision-capable model is configured, the image is sent directly to the
+        vision LLM for harm analysis.  This is more reliable than OCR-then-
+        analyse for memes where text extraction is unreliable (e.g. neutral
+        colour palettes, low-contrast text).
 
     Returns
     -------
     dict
     """
-    # ---- Try LLM-based analysis first --------------------------------
+    # ---- Try vision-based analysis first (most accurate for memes) -----
+    if image_path and llm_vision_available():
+        vision_result = analyse_meme_with_vision(image_path, image_features)
+        if vision_result is not None:
+            return _format_llm_result(vision_result, image_features)
+        logger.warning("Vision analysis returned None – falling back to text LLM")
+
+    # ---- Try text-only LLM analysis ------------------------------------
     if llm_available():
         llm_result = analyse_meme(extracted_text, image_features)
         if llm_result is not None:
             return _format_llm_result(llm_result, image_features)
         logger.warning("LLM analysis returned None – falling back to keywords")
 
-    # ---- Keyword / pattern fallback -----------------------------------
+    # ---- Keyword / pattern fallback ------------------------------------
     return _keyword_classify(text_result, image_features)
 
 

@@ -63,8 +63,9 @@ def analyse():
     # 2. Text processing
     text_result = analyse_text(extracted_text, config.KEYWORDS_PATH)
 
-    # 3. Classification + justification (LLM primary, keyword fallback)
-    result = classify(text_result, image_features, extracted_text=extracted_text)
+    # 3. Classification + justification (vision LLM primary, text LLM, keyword fallback)
+    result = classify(text_result, image_features, extracted_text=extracted_text,
+                      image_path=filepath)
 
     # 4. Persist to database
     record_id = save_analysis(
