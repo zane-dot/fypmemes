@@ -127,6 +127,11 @@ def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url
         :func:`processors.image_processor.extract_image_features`.
     model : str | None
         Override the vision model name (defaults to ``OPENAI_VISION_MODEL``).
+        When an explicit *model* is provided the function only requires
+        ``OPENAI_API_KEY`` to be set; ``OPENAI_VISION_MODEL`` is not needed.
+        This allows callers to attempt vision analysis using ``OPENAI_MODEL``
+        when ``OPENAI_VISION_MODEL`` is not configured – the call fails
+        gracefully if the model does not support image inputs.
     base_url : str | None
         Override the API base URL (defaults to ``OPENAI_BASE_URL``).
 
@@ -137,7 +142,15 @@ def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url
         otherwise a dict with: ``is_harmful``, ``harm_score``, ``categories``,
         ``justification``.
     """
-    if not is_vision_available():
+    # When an explicit model is provided we only need OPENAI_API_KEY.
+    # Without an explicit model, require OPENAI_VISION_MODEL to be set so that
+    # we never silently fall back to a text-only model as the vision backend.
+    needs_key_only = model is not None
+    if needs_key_only:
+        if not (_HAS_OPENAI and bool(os.environ.get("OPENAI_API_KEY"))):
+            logger.info("LLM backend unavailable – skipping vision analysis")
+            return None
+    elif not is_vision_available():
         logger.info("Vision LLM backend unavailable – skipping vision analysis")
         return None
 
@@ -246,6 +259,15 @@ def _build_prompt(extracted_text, image_features):
 
     if extracted_text and extracted_text.strip():
         parts.append(f"## Extracted text\n```\n{extracted_text}\n```\n")
+    elif image_features.get("has_text_region"):
+        parts.append("""\
+## Extracted text
+(OCR failed to extract text from this image. However, image analysis \
+detected a text overlay region, indicating the meme very likely \
+contains text that OCR could not read. Do NOT classify the meme as \
+non-harmful solely because text could not be extracted – treat this \
+as an uncertain case and apply appropriate caution in your analysis.)
+""")
     else:
         parts.append("## Extracted text\n(no text could be extracted)\n")
 

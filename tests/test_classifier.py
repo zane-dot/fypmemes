@@ -193,6 +193,101 @@ class TestClassifyWithVision:
         classify(_safe_text_result(), _basic_features())
         assert vision_called == [], "Vision should not be called without image_path"
 
+    def test_ocr_failure_vision_fallback_with_text_region(self, monkeypatch, tmp_path):
+        """When OCR returns empty and text region detected, vision fallback is tried."""
+        import os
+        from PIL import Image
+        path = tmp_path / "meme.png"
+        Image.new("RGB", (200, 200), color=(230, 210, 190)).save(str(path))
+
+        features = _basic_features()
+        features["has_text_region"] = True
+
+        monkeypatch.setattr("models.classifier.llm_vision_available", lambda: False)
+        monkeypatch.setattr("models.classifier.llm_available", lambda: True)
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
+
+        vision_calls = []
+        fake_vision = {
+            "is_harmful": True,
+            "harm_score": 0.8,
+            "categories": ["Hate Speech"],
+            "justification": "Vision fallback detected harmful text in the image.",
+        }
+
+        def _capture_vision(image_path, image_features, *, model=None, **kw):
+            vision_calls.append(model)
+            return fake_vision
+
+        monkeypatch.setattr("models.classifier.analyse_meme_with_vision", _capture_vision)
+
+        result = classify(
+            _safe_text_result(), features,
+            extracted_text="", image_path=str(path),
+        )
+
+        assert result["is_harmful"] is True
+        assert result["analysis_method"] == "llm"
+        assert len(vision_calls) == 1
+        assert vision_calls[0] == "gpt-4o"
+
+    def test_ocr_failure_vision_fallback_skipped_when_text_extracted(self, monkeypatch, tmp_path):
+        """Vision fallback is NOT attempted when OCR did extract text."""
+        from PIL import Image
+        path = tmp_path / "meme.png"
+        Image.new("RGB", (200, 200)).save(str(path))
+
+        features = _basic_features()
+        features["has_text_region"] = True
+
+        monkeypatch.setattr("models.classifier.llm_vision_available", lambda: False)
+        monkeypatch.setattr("models.classifier.llm_available", lambda: True)
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
+
+        vision_calls = []
+
+        def _capture_vision(*a, **kw):
+            vision_calls.append(1)
+            return None
+
+        monkeypatch.setattr("models.classifier.analyse_meme_with_vision", _capture_vision)
+
+        fake_llm = {"is_harmful": False, "harm_score": 0.1, "categories": [], "justification": "ok"}
+        monkeypatch.setattr("models.classifier.analyse_meme", lambda *a, **kw: fake_llm)
+
+        classify(_safe_text_result(), features, extracted_text="some text", image_path=str(path))
+
+        # Vision fallback should NOT be called because extracted_text is non-empty
+        assert vision_calls == []
+
+    def test_ocr_failure_vision_fallback_skipped_without_text_region(self, monkeypatch, tmp_path):
+        """Vision fallback is NOT attempted when no text region is detected."""
+        from PIL import Image
+        path = tmp_path / "meme.png"
+        Image.new("RGB", (200, 200)).save(str(path))
+
+        features = _basic_features()
+        features["has_text_region"] = False
+
+        monkeypatch.setattr("models.classifier.llm_vision_available", lambda: False)
+        monkeypatch.setattr("models.classifier.llm_available", lambda: True)
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
+
+        vision_calls = []
+
+        def _capture_vision(*a, **kw):
+            vision_calls.append(1)
+            return None
+
+        monkeypatch.setattr("models.classifier.analyse_meme_with_vision", _capture_vision)
+
+        fake_llm = {"is_harmful": False, "harm_score": 0.0, "categories": [], "justification": "ok"}
+        monkeypatch.setattr("models.classifier.analyse_meme", lambda *a, **kw: fake_llm)
+
+        classify(_safe_text_result(), features, extracted_text="", image_path=str(path))
+
+        assert vision_calls == []
+
 
 class TestBuildJustification:
     def test_safe_justification(self):

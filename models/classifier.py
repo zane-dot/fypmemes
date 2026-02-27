@@ -15,6 +15,7 @@ The final output always contains:
 
 import json
 import logging
+import os
 
 from processors.llm_processor import (
     analyse_meme,
@@ -54,6 +55,32 @@ def classify(text_result, image_features, extracted_text="", image_path=None):
         if vision_result is not None:
             return _format_llm_result(vision_result, image_features)
         logger.warning("Vision analysis returned None – falling back to text LLM")
+
+    # ---- OCR-failure vision fallback ------------------------------------
+    # When all OCR passes returned nothing but a text region was detected,
+    # attempt vision analysis using OPENAI_MODEL (e.g. gpt-4o) even if
+    # OPENAI_VISION_MODEL is not explicitly configured.  This mirrors the
+    # approach used by other harmful-meme detection platforms that send the
+    # image directly to a multimodal model.  The call fails gracefully and
+    # falls through to text-only LLM if the model does not support images.
+    if (
+        image_path
+        and not extracted_text
+        and image_features.get("has_text_region")
+        and llm_available()
+        and not llm_vision_available()
+    ):
+        fallback_model = os.environ.get("OPENAI_MODEL")
+        if fallback_model:
+            logger.info(
+                "OCR returned empty with text region detected – attempting "
+                "vision fallback with model: %s", fallback_model,
+            )
+            vision_result = analyse_meme_with_vision(
+                image_path, image_features, model=fallback_model,
+            )
+            if vision_result is not None:
+                return _format_llm_result(vision_result, image_features)
 
     # ---- Try text-only LLM analysis ------------------------------------
     if llm_available():

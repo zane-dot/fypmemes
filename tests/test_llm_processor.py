@@ -69,6 +69,20 @@ class TestBuildPrompt:
         assert "width" in prompt
         assert "200" in prompt
 
+    def test_ocr_failure_with_text_region_warns_caution(self):
+        """When OCR fails but has_text_region is True, prompt warns to be cautious."""
+        prompt = _build_prompt("", {"width": 100, "has_text_region": True})
+        assert "OCR failed" in prompt
+        assert "text overlay region" in prompt
+        # Should NOT use the generic placeholder when text region is detected
+        assert "no text could be extracted" not in prompt
+
+    def test_no_text_no_text_region_uses_plain_placeholder(self):
+        """When OCR fails and no text region, use the generic placeholder."""
+        prompt = _build_prompt("", {"width": 100, "has_text_region": False})
+        assert "no text could be extracted" in prompt
+        assert "OCR failed" not in prompt
+
 
 class TestParseResponse:
     def test_valid_json(self):
@@ -182,4 +196,51 @@ class TestAnalyseMemeWithVision:
         with patch.object(llm_processor, "OpenAI", return_value=mock_client):
             result = llm_processor.analyse_meme_with_vision(str(path), {})
 
+        assert result is None
+
+    def test_explicit_model_bypasses_vision_model_check(self, tmp_path, monkeypatch):
+        """When model is passed explicitly, OPENAI_VISION_MODEL need not be set."""
+        import json
+        from unittest.mock import MagicMock, patch
+        from PIL import Image
+        from processors import llm_processor
+
+        path = tmp_path / "meme.png"
+        Image.new("RGB", (200, 200), color=(220, 200, 180)).save(str(path))
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.delenv("OPENAI_VISION_MODEL", raising=False)
+
+        fake_response_content = json.dumps({
+            "is_harmful": False,
+            "harm_score": 0.1,
+            "categories": [],
+            "justification": "Safe meme.",
+        })
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices[0].message.content = (
+            fake_response_content
+        )
+
+        with patch.object(llm_processor, "OpenAI", return_value=mock_client):
+            result = llm_processor.analyse_meme_with_vision(
+                str(path), {"width": 200}, model="gpt-4o",
+            )
+
+        assert result is not None
+        assert result["is_harmful"] is False
+
+    def test_explicit_model_returns_none_without_api_key(self, tmp_path, monkeypatch):
+        """With explicit model but no API key, returns None gracefully."""
+        from PIL import Image
+        from processors.llm_processor import analyse_meme_with_vision
+
+        path = tmp_path / "img.png"
+        Image.new("RGB", (100, 100)).save(str(path))
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_VISION_MODEL", raising=False)
+
+        result = analyse_meme_with_vision(str(path), {}, model="gpt-4o")
         assert result is None
