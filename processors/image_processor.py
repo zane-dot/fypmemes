@@ -3,16 +3,24 @@
 Handles image feature extraction and OCR text extraction from meme images.
 """
 
-import io
 import logging
 
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Tesseract is optional – the system still works (without OCR) when it is
-# not installed, which makes the test-suite runnable in minimal CI
-# environments.
+# EasyOCR is the preferred OCR backend – it supports both English and Chinese
+# (simplified) without requiring a separate Tesseract installation.
+try:
+    import easyocr as _easyocr
+
+    _HAS_EASYOCR = True
+except ImportError:
+    _HAS_EASYOCR = False
+
+# Tesseract / pytesseract is kept as a fallback for environments where EasyOCR
+# is not available.  The system still works (without OCR) when neither backend
+# is installed.
 try:
     import pytesseract
 
@@ -20,24 +28,56 @@ try:
 except ImportError:
     _HAS_TESSERACT = False
 
+# Module-level EasyOCR reader cache – initialised on first use so that the
+# heavy model download/load only happens when OCR is actually needed.
+_easyocr_reader = None
+
+
+def _get_easyocr_reader():
+    """Return (and lazily initialise) the shared EasyOCR reader.
+
+    The reader is configured for English (``en``) and Simplified Chinese
+    (``ch_sim``), which covers the vast majority of text found in memes.
+    """
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        logger.info("Initialising EasyOCR reader for languages: en, ch_sim")
+        _easyocr_reader = _easyocr.Reader(["en", "ch_sim"], gpu=False)
+    return _easyocr_reader
+
 
 def extract_text(image_path):
     """Extract text from a meme image using OCR.
 
-    Returns the extracted string (may be empty).  If *pytesseract* is not
-    installed the function returns an empty string instead of raising.
+    Tries EasyOCR first (supports English **and** Chinese).  Falls back to
+    *pytesseract* (English-only) when EasyOCR is not installed.  Returns an
+    empty string when no OCR backend is available.
     """
-    if not _HAS_TESSERACT:
-        logger.warning("pytesseract not installed – skipping OCR")
-        return ""
+    # --- EasyOCR (preferred) -------------------------------------------
+    if _HAS_EASYOCR:
+        try:
+            reader = _get_easyocr_reader()
+            results = reader.readtext(image_path, detail=0)
+            return " ".join(results).strip()
+        except Exception:
+            logger.exception("EasyOCR failed for %s", image_path)
+            # Fall through to the pytesseract fallback below.
 
-    try:
-        img = Image.open(image_path)
-        text = pytesseract.image_to_string(img)
-        return text.strip()
-    except Exception:
-        logger.exception("OCR failed for %s", image_path)
-        return ""
+    # --- pytesseract fallback ------------------------------------------
+    if _HAS_TESSERACT:
+        try:
+            img = Image.open(image_path)
+            # Request both English and Chinese (simplified + traditional).
+            # Tesseract will silently skip language packs that are not
+            # installed, so this is safe even in minimal environments.
+            text = pytesseract.image_to_string(img, lang="eng+chi_sim+chi_tra")
+            return text.strip()
+        except Exception:
+            logger.exception("pytesseract OCR failed for %s", image_path)
+            return ""
+
+    logger.warning("No OCR backend available – skipping text extraction")
+    return ""
 
 
 def extract_image_features(image_path):
