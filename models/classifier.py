@@ -1,13 +1,27 @@
 """Harmfulness classifier for memes.
 
-Combines image features and text-analysis results to produce a final
-classification together with a human-readable justification.
+Uses an LLM (when available) as the **primary** analysis engine.  Falls
+back to the keyword / pattern-based classifier when no LLM API key is
+configured.
+
+The final output always contains:
+* ``is_harmful`` – boolean
+* ``harm_score`` – 0.0 … 1.0
+* ``categories`` – JSON-encoded list of category labels
+* ``justification`` – human-readable explanation
+* ``image_features`` – JSON-encoded dict of visual features
+* ``analysis_method`` – ``"llm"`` or ``"keyword"``
 """
 
 import json
+import logging
+
+from processors.llm_processor import analyse_meme, is_available as llm_available
+
+logger = logging.getLogger(__name__)
 
 
-def classify(text_result, image_features):
+def classify(text_result, image_features, extracted_text=""):
     """Classify a meme and generate a justification.
 
     Parameters
@@ -16,31 +30,58 @@ def classify(text_result, image_features):
         Output of :func:`processors.text_processor.analyse_text`.
     image_features : dict
         Output of :func:`processors.image_processor.extract_image_features`.
+    extracted_text : str
+        Raw OCR text (passed through to the LLM for richer analysis).
 
     Returns
     -------
-    dict with keys:
-        * ``is_harmful`` (bool)
-        * ``harm_score`` (float 0-1)
-        * ``categories`` (JSON string – list of matched category labels)
-        * ``justification`` (str – human-readable explanation)
-        * ``image_features`` (JSON string)
+    dict
     """
+    # ---- Try LLM-based analysis first --------------------------------
+    if llm_available():
+        llm_result = analyse_meme(extracted_text, image_features)
+        if llm_result is not None:
+            return _format_llm_result(llm_result, image_features)
+        logger.warning("LLM analysis returned None – falling back to keywords")
+
+    # ---- Keyword / pattern fallback -----------------------------------
+    return _keyword_classify(text_result, image_features)
+
+
+# ------------------------------------------------------------------ #
+# LLM result formatting
+# ------------------------------------------------------------------ #
+
+def _format_llm_result(llm_result, image_features):
+    categories = llm_result.get("categories", [])
+    return {
+        "is_harmful": llm_result["is_harmful"],
+        "harm_score": round(llm_result["harm_score"], 4),
+        "categories": json.dumps(categories),
+        "justification": llm_result["justification"],
+        "image_features": json.dumps(image_features),
+        "analysis_method": "llm",
+    }
+
+
+# ------------------------------------------------------------------ #
+# Keyword / pattern fallback
+# ------------------------------------------------------------------ #
+
+def _keyword_classify(text_result, image_features):
     text_score = text_result.get("overall_score", 0.0)
     matched = text_result.get("matched_categories", [])
 
-    # Image-only heuristic boost (e.g. high-contrast text overlay detected)
+    # Image-only heuristic boost
     image_boost = 0.0
     if image_features.get("has_text_region") and not matched:
-        image_boost = 0.05  # slight bump when text region detected
+        image_boost = 0.05
 
     harm_score = min(1.0, text_score + image_boost)
     is_harmful = harm_score >= 0.4
 
-    # Build justification --------------------------------------------------
     justification = _build_justification(is_harmful, harm_score, matched,
                                          image_features)
-
     category_labels = [m["label"] for m in matched]
 
     return {
@@ -49,6 +90,7 @@ def classify(text_result, image_features):
         "categories": json.dumps(category_labels),
         "justification": justification,
         "image_features": json.dumps(image_features),
+        "analysis_method": "keyword",
     }
 
 

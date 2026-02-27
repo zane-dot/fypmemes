@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}History – Harmful Meme Detector{% endblock %}
+{% block content %}
+<section class="history-section">
+    <h1>Analysis History</h1>
+
+    {% if records %}
+    <table class="history-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Preview</th>
+                <th>Classification</th>
+                <th>Score</th>
+                <th>Categories</th>
+                <th>Date</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in records %}
+            <tr>
+                <td>{{ r.id }}</td>
+                <td><img src="{{ url_for('static', filename='uploads/' + r.filename) }}" class="thumb" alt="meme"></td>
+                <td>
+                    {% if r.is_harmful %}
+                    <span class="badge harmful">HARMFUL</span>
+                    {% else %}
+                    <span class="badge safe">SAFE</span>
+                    {% endif %}
+                </td>
+                <td>{{ "%.2f"|format(r.harm_score) }}</td>
+                <td>{{ r.categories_list | join(', ') or '—' }}</td>
+                <td>{{ r.created_at[:19] }}</td>
+                <td><a href="{{ url_for('result', record_id=r.id) }}" class="btn btn-small">View</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty">No memes have been analysed yet. <a href="{{ url_for('index') }}">Upload one now!</a></p>
+    {% endif %}
+</section>
+{% endblock %}

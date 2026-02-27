@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Result – Harmful Meme Detector{% endblock %}
+{% block content %}
+<section class="result-section">
+    <h1>Analysis Result</h1>
+
+    <div class="result-card {{ 'harmful' if record.is_harmful else 'safe' }}">
+        <div class="result-header">
+            {% if record.is_harmful %}
+            <span class="badge harmful">⚠️ HARMFUL</span>
+            {% else %}
+            <span class="badge safe">✅ NOT HARMFUL</span>
+            {% endif %}
+            <span class="score">Score: {{ "%.2f"|format(record.harm_score) }} / 1.00</span>
+        </div>
+
+        <div class="result-body">
+            <div class="result-image">
+                <img src="{{ url_for('static', filename='uploads/' + record.filename) }}" alt="Analysed meme">
+            </div>
+
+            <div class="result-details">
+                {% if record.categories_list %}
+                <h3>Detected Categories</h3>
+                <ul class="category-list">
+                    {% for cat in record.categories_list %}
+                    <li><span class="tag">{{ cat }}</span></li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+
+                {% if record.extracted_text %}
+                <h3>Extracted Text (OCR)</h3>
+                <pre class="extracted-text">{{ record.extracted_text }}</pre>
+                {% else %}
+                <p class="no-text">No text could be extracted from the image.</p>
+                {% endif %}
+
+                <h3>Justification</h3>
+                <div class="justification">{{ record.justification | replace('\n', '<br>') | safe }}</div>
+
+                <h3>Image Features</h3>
+                <table class="features-table">
+                    {% for key, val in record.image_features_dict.items() %}
+                    <tr><td>{{ key }}</td><td>{{ val }}</td></tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">⬅ Analyse Another Meme</a>
+</section>
+{% endblock %}

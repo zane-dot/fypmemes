@@ -76,9 +76,10 @@ def analyse_text(text, keywords_path):
 
 def _match_keywords(text, keywords):
     """Return the subset of *keywords* found in *text*."""
+    lower_text = text.lower()
     hits = []
     for kw in keywords:
-        if kw.lower() in text:
+        if kw.lower() in lower_text:
             hits.append(kw)
     return hits
 

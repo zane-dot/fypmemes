@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Upload Meme – Harmful Meme Detector{% endblock %}
+{% block content %}
+<section class="hero">
+    <h1>Harmful Meme Detection System</h1>
+    <p>Upload a meme image to analyse its visual and textual content for harmful material. The system uses <strong>LLM-powered analysis</strong> combined with image processing and text extraction to classify memes and explain its reasoning.</p>
+</section>
+
+<section class="upload-section">
+    <form action="{{ url_for('analyse') }}" method="post" enctype="multipart/form-data" class="upload-form">
+        <label for="meme" class="file-label">
+            <span class="file-icon">📁</span>
+            <span class="file-text">Choose an image file…</span>
+            <input type="file" name="meme" id="meme" accept="image/*" required>
+        </label>
+        <p class="hint">Supported formats: PNG, JPG, JPEG, GIF, WebP (max 16 MB)</p>
+        <button type="submit" class="btn btn-primary">🔍 Analyse Meme</button>
+    </form>
+</section>
+
+<section class="features">
+    <h2>How It Works</h2>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <h3>🖼️ Image Processing</h3>
+            <p>Extracts visual features (colours, contrast, text-region detection) and performs OCR to read embedded text.</p>
+        </div>
+        <div class="feature-card">
+            <h3>📝 Text Processing</h3>
+            <p>Analyses extracted text against a curated harmful-keyword database with regex pattern matching.</p>
+        </div>
+        <div class="feature-card">
+            <h3>🤖 LLM Analysis</h3>
+            <p>Leverages a Large Language Model to deeply understand context, sarcasm, and subtle harmful intent.</p>
+        </div>
+        <div class="feature-card">
+            <h3>⚖️ Classification &amp; Justification</h3>
+            <p>Provides a clear harmful / not-harmful verdict with a detailed, human-readable justification.</p>
+        </div>
+    </div>
+</section>
+
+<script>
+document.getElementById('meme').addEventListener('change', function () {
+    var text = this.files.length ? this.files[0].name : 'Choose an image file…';
+    this.closest('.file-label').querySelector('.file-text').textContent = text;
+});
+</script>
+{% endblock %}

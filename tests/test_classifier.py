@@ -1,0 +1,135 @@
+"""Tests for the classifier module."""
+
+import json
+
+from models.classifier import classify, _keyword_classify, _build_justification
+
+
+def _safe_text_result():
+    return {
+        "matched_categories": [],
+        "overall_score": 0.0,
+        "is_harmful": False,
+    }
+
+
+def _harmful_text_result():
+    return {
+        "matched_categories": [
+            {
+                "category": "hate_speech",
+                "label": "Hate Speech",
+                "description": "Promotes hatred.",
+                "severity": 0.9,
+                "keyword_matches": ["slur"],
+                "pattern_matches": [],
+            }
+        ],
+        "overall_score": 0.9,
+        "is_harmful": True,
+    }
+
+
+def _basic_features():
+    return {
+        "width": 400,
+        "height": 400,
+        "format": "PNG",
+        "mode": "RGB",
+        "has_text_region": False,
+        "dominant_colors": ["#ff0000"],
+        "brightness": 120.0,
+        "contrast": 30.0,
+        "color_variance": 20.0,
+    }
+
+
+class TestKeywordClassify:
+    def test_safe_meme(self):
+        result = _keyword_classify(_safe_text_result(), _basic_features())
+        assert result["is_harmful"] is False
+        assert result["harm_score"] == 0.0
+        assert result["analysis_method"] == "keyword"
+
+    def test_harmful_meme(self):
+        result = _keyword_classify(_harmful_text_result(), _basic_features())
+        assert result["is_harmful"] is True
+        assert result["harm_score"] >= 0.4
+        cats = json.loads(result["categories"])
+        assert "Hate Speech" in cats
+
+    def test_image_boost_on_text_region(self):
+        features = _basic_features()
+        features["has_text_region"] = True
+        result = _keyword_classify(_safe_text_result(), features)
+        assert result["harm_score"] == 0.05  # boost only
+
+    def test_justification_present(self):
+        result = _keyword_classify(_harmful_text_result(), _basic_features())
+        assert "HARMFUL" in result["justification"]
+
+
+class TestClassifyFallback:
+    """classify() should fall back to keywords when LLM is unavailable."""
+
+    def test_fallback_safe(self, monkeypatch):
+        monkeypatch.setattr(
+            "models.classifier.llm_available", lambda: False
+        )
+        result = classify(_safe_text_result(), _basic_features())
+        assert result["is_harmful"] is False
+        assert result["analysis_method"] == "keyword"
+
+    def test_fallback_harmful(self, monkeypatch):
+        monkeypatch.setattr(
+            "models.classifier.llm_available", lambda: False
+        )
+        result = classify(_harmful_text_result(), _basic_features())
+        assert result["is_harmful"] is True
+        assert result["analysis_method"] == "keyword"
+
+
+class TestClassifyWithLLM:
+    """classify() should use LLM result when available."""
+
+    def test_llm_result_used(self, monkeypatch):
+        monkeypatch.setattr(
+            "models.classifier.llm_available", lambda: True
+        )
+        fake_llm = {
+            "is_harmful": True,
+            "harm_score": 0.85,
+            "categories": ["Hate Speech"],
+            "justification": "LLM says harmful.",
+        }
+        monkeypatch.setattr(
+            "models.classifier.analyse_meme",
+            lambda *a, **kw: fake_llm,
+        )
+        result = classify(_safe_text_result(), _basic_features(), extracted_text="test")
+        assert result["is_harmful"] is True
+        assert result["analysis_method"] == "llm"
+        assert "LLM says harmful" in result["justification"]
+
+    def test_llm_none_falls_back(self, monkeypatch):
+        monkeypatch.setattr(
+            "models.classifier.llm_available", lambda: True
+        )
+        monkeypatch.setattr(
+            "models.classifier.analyse_meme",
+            lambda *a, **kw: None,
+        )
+        result = classify(_safe_text_result(), _basic_features())
+        assert result["analysis_method"] == "keyword"
+
+
+class TestBuildJustification:
+    def test_safe_justification(self):
+        j = _build_justification(False, 0.0, [], _basic_features())
+        assert "NOT harmful" in j
+
+    def test_harmful_justification_has_category(self):
+        cats = _harmful_text_result()["matched_categories"]
+        j = _build_justification(True, 0.9, cats, _basic_features())
+        assert "HARMFUL" in j
+        assert "Hate Speech" in j
