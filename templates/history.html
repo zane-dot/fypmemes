@@ -12,6 +12,9 @@
                 <th>Preview</th>
                 <th>Classification</th>
                 <th>Score</th>
+                <th>DeepSeek Result</th>
+                <th>Aliyun Result</th>
+                <th>Final Decision</th>
                 <th>Categories</th>
                 <th>Date</th>
                 <th></th>
@@ -30,6 +33,41 @@
                     {% endif %}
                 </td>
                 <td>{{ "%.2f"|format(r.harm_score) }}</td>
+                <td>
+                    <div class="history-ai-block">
+                        <p><span class="tag">Benign Side</span></p>
+                        {% if r.pro_rationale %}
+                        <p class="history-ai-text">{{ (r.pro_rationale or '')[:120] }}{% if (r.pro_rationale or '')|length > 120 %}...{% endif %}</p>
+                        {% else %}
+                        <p class="history-ai-text history-empty">—</p>
+                        {% endif %}
+                    </div>
+                </td>
+                <td>
+                    <div class="history-ai-block">
+                        <p><span class="tag">Harmful Side</span></p>
+                        {% if r.con_rationale %}
+                        <p class="history-ai-text">{{ (r.con_rationale or '')[:120] }}{% if (r.con_rationale or '')|length > 120 %}...{% endif %}</p>
+                        {% else %}
+                        <p class="history-ai-text history-empty">—</p>
+                        {% endif %}
+                    </div>
+                </td>
+                <td>
+                    <div class="history-ai-block">
+                        {% if r.analysis_method %}
+                        <p><span class="tag">{{ r.analysis_method }}</span></p>
+                        {% endif %}
+                        {% if r.judge_side %}
+                        <p class="history-ai-text">Judge: {{ r.judge_side }}</p>
+                        {% endif %}
+                        {% if r.judge_reasoning %}
+                        <p class="history-ai-text">{{ (r.judge_reasoning or '')[:120] }}{% if (r.judge_reasoning or '')|length > 120 %}...{% endif %}</p>
+                        {% elif not r.judge_side %}
+                        <p class="history-ai-text history-empty">—</p>
+                        {% endif %}
+                    </div>
+                </td>
                 <td>{{ r.categories_list | join(', ') or '—' }}</td>
                 <td>{{ r.created_at[:19] }}</td>
                 <td><a href="{{ url_for('result', record_id=r.id) }}" class="btn btn-small">View</a></td>

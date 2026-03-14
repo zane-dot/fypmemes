@@ -1,16 +1,4 @@
-"""LLM-based meme content analysis.
-
-Uses an OpenAI-compatible API to analyse the extracted text and image
-features of a meme.  The LLM provides:
-
-* A harmfulness classification (harmful / not harmful)
-* A harm score (0.0 – 1.0)
-* Detected harmful categories
-* A human-readable justification explaining the reasoning
-
-When no API key is configured the module returns ``None`` so the caller
-can fall back to the keyword-based classifier.
-"""
+"""LLM-based meme content analysis and ExplainHM-style debate pipeline."""
 
 import base64
 import json
@@ -33,6 +21,10 @@ except ImportError:
     _HAS_OPENAI = False
 
 
+DEEPSEEK_BASE_URL_DEFAULT = "https://api.deepseek.com"
+ALIYUN_BASE_URL_DEFAULT = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 # ------------------------------------------------------------------ #
 # Public API
 # ------------------------------------------------------------------ #
@@ -45,11 +37,13 @@ def is_available():
 def is_vision_available():
     """Return True when a vision-capable model is configured.
 
-    Requires both ``OPENAI_API_KEY`` and ``OPENAI_VISION_MODEL`` to be set.
+    Requires a vision-capable model and either a dedicated vision API key
+    or the default OPENAI_API_KEY.
     """
+    vision_key = os.environ.get("OPENAI_VISION_API_KEY") or os.environ.get("OPENAI_API_KEY")
     return (
         _HAS_OPENAI
-        and bool(os.environ.get("OPENAI_API_KEY"))
+        and bool(vision_key)
         and bool(os.environ.get("OPENAI_VISION_MODEL"))
     )
 
@@ -80,7 +74,7 @@ def analyse_meme(extracted_text, image_features, *, model=None, base_url=None):
         return None
 
     api_key = os.environ["OPENAI_API_KEY"]
-    resolved_base = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+    resolved_base = base_url or os.environ.get("OPENAI_BASE_URL", DEEPSEEK_BASE_URL_DEFAULT)
     resolved_model = model or os.environ.get("OPENAI_MODEL", "deepseek-chat")
 
     client_kwargs = {"api_key": api_key}
@@ -90,22 +84,17 @@ def analyse_meme(extracted_text, image_features, *, model=None, base_url=None):
     client = OpenAI(**client_kwargs)
 
     prompt = _build_prompt(extracted_text, image_features)
-
-    try:
-        response = client.chat.completions.create(
-            model=resolved_model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-            max_tokens=1024,
-        )
-        content = response.choices[0].message.content
-        return _parse_response(content)
-    except Exception:
-        logger.exception("LLM analysis failed")
-        return None
+    return _call_and_parse_classification(
+        client,
+        model=resolved_model,
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.1,
+        max_tokens=1024,
+        log_prefix="LLM analysis",
+    )
 
 
 def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url=None):
@@ -142,12 +131,17 @@ def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url
         otherwise a dict with: ``is_harmful``, ``harm_score``, ``categories``,
         ``justification``.
     """
+    vision_key = os.environ.get("OPENAI_VISION_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    vision_base = base_url or os.environ.get("OPENAI_VISION_BASE_URL") or os.environ.get(
+        "OPENAI_BASE_URL", DEEPSEEK_BASE_URL_DEFAULT
+    )
+
     # When an explicit model is provided we only need OPENAI_API_KEY.
     # Without an explicit model, require OPENAI_VISION_MODEL to be set so that
     # we never silently fall back to a text-only model as the vision backend.
     needs_key_only = model is not None
     if needs_key_only:
-        if not (_HAS_OPENAI and bool(os.environ.get("OPENAI_API_KEY"))):
+        if not (_HAS_OPENAI and bool(vision_key)):
             logger.info("LLM backend unavailable – skipping vision analysis")
             return None
     elif not is_vision_available():
@@ -165,9 +159,9 @@ def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url
     ext = image_path.rsplit(".", 1)[-1].lower()
     mime = _IMAGE_MIME_TYPES.get(ext, "jpeg")
 
-    api_key = os.environ["OPENAI_API_KEY"]
+    api_key = vision_key
     resolved_model = model or os.environ.get("OPENAI_VISION_MODEL")
-    resolved_base = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+    resolved_base = vision_base
 
     client_kwargs = {"api_key": api_key}
     if resolved_base:
@@ -177,42 +171,273 @@ def analyse_meme_with_vision(image_path, image_features, *, model=None, base_url
 
     features_text = "\n".join(f"- {k}: {v}" for k, v in image_features.items())
 
+    return _call_and_parse_classification(
+        client,
+        model=resolved_model,
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Analyse the following meme image for harmful content. "
+                            "Read all text visible in the image and consider both "
+                            "the visual content and any embedded text.\n\n"
+                            "## Image features\n"
+                            f"{features_text}\n\n"
+                            "Please classify this meme and provide your detailed "
+                            "justification."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/{mime};base64,{img_b64}",
+                        },
+                    },
+                ],
+            },
+        ],
+        temperature=0.1,
+        max_tokens=1024,
+        log_prefix=f"Vision-based meme analysis for {image_path}",
+    )
+
+
+def is_explainhm_available():
+    """Return True when both debate sides can run.
+
+    - Positive/benign debater: DeepSeek (`OPENAI_*`)
+    - Negative/harmful debater: Aliyun (`OPENAI_VISION_*`)
+    """
+    has_deepseek = _HAS_OPENAI and bool(os.environ.get("OPENAI_API_KEY")) and bool(
+        os.environ.get("OPENAI_MODEL", "deepseek-chat")
+    )
+    has_aliyun = _HAS_OPENAI and bool(os.environ.get("OPENAI_VISION_API_KEY")) and bool(
+        os.environ.get("OPENAI_VISION_MODEL", "qwen-vl-plus")
+    )
+    return has_deepseek and has_aliyun
+
+
+def run_explainhm_pipeline(extracted_text, image_features, *, image_path=None):
+    """Run ExplainHM-like three-act pipeline: debate -> judge -> result."""
+    if not is_explainhm_available():
+        return None
+
+    benign_argument = _generate_debate_argument(
+        side="benign",
+        extracted_text=extracted_text,
+        image_features=image_features,
+        image_path=image_path,
+    )
+    harmful_argument = _generate_debate_argument(
+        side="harmful",
+        extracted_text=extracted_text,
+        image_features=image_features,
+        image_path=image_path,
+    )
+    if benign_argument is None or harmful_argument is None:
+        return None
+
+    judged = _judge_debate(
+        extracted_text=extracted_text,
+        image_features=image_features,
+        image_path=image_path,
+        benign_argument=benign_argument,
+        harmful_argument=harmful_argument,
+    )
+    if judged is None:
+        return None
+
+    return {
+        "is_harmful": judged["is_harmful"],
+        "harm_score": judged["harm_score"],
+        "categories": judged.get("categories", []),
+        "justification": judged.get("justification", ""),
+        "pro_rationale": benign_argument.get("rationale", ""),
+        "con_rationale": harmful_argument.get("rationale", ""),
+        "judge_reasoning": judged.get("judge_reasoning", ""),
+        "judge_side": judged.get("selected_side", ""),
+        "debate": {
+            "benign": benign_argument,
+            "harmful": harmful_argument,
+        },
+    }
+
+
+def _generate_debate_argument(side, extracted_text, image_features, image_path):
+    is_benign = side == "benign"
+    if is_benign:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        base_url = os.environ.get("OPENAI_BASE_URL", DEEPSEEK_BASE_URL_DEFAULT)
+        model = os.environ.get("OPENAI_MODEL", "deepseek-chat")
+        system_prompt = _DEBATER_BENIGN_SYSTEM_PROMPT
+    else:
+        api_key = os.environ.get("OPENAI_VISION_API_KEY")
+        base_url = os.environ.get("OPENAI_VISION_BASE_URL", ALIYUN_BASE_URL_DEFAULT)
+        model = os.environ.get("OPENAI_VISION_MODEL", "qwen-vl-plus")
+        system_prompt = _DEBATER_HARMFUL_SYSTEM_PROMPT
+
+    if not (_HAS_OPENAI and api_key and model):
+        return None
+
+    client_kwargs = {"api_key": api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+
+    client = OpenAI(**client_kwargs)
+    user_content = _build_debate_user_content(
+        extracted_text=extracted_text,
+        image_features=image_features,
+        image_path=image_path,
+        include_image=(not is_benign and bool(image_path)),
+    )
+
     try:
         response = client.chat.completions.create(
-            model=resolved_model,
+            model=model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Analyse the following meme image for harmful content. "
-                                "Read all text visible in the image and consider both "
-                                "the visual content and any embedded text.\n\n"
-                                "## Image features\n"
-                                f"{features_text}\n\n"
-                                "Please classify this meme and provide your detailed "
-                                "justification."
-                            ),
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/{mime};base64,{img_b64}",
-                            },
-                        },
-                    ],
-                },
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
             ],
-            temperature=0.1,
+            temperature=0.2,
             max_tokens=1024,
+        )
+        payload = _parse_json_block(response.choices[0].message.content)
+        if payload is None:
+            return None
+        return {
+            "stance": side,
+            "confidence": float(payload.get("confidence", 0.5)),
+            "rationale": str(payload.get("rationale", "")).strip(),
+            "evidence": payload.get("evidence", []),
+        }
+    except Exception:
+        logger.exception("ExplainHM debate generation failed for side=%s", side)
+        return None
+
+
+def _judge_debate(extracted_text, image_features, image_path,
+                  benign_argument, harmful_argument):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    model = os.environ.get("OPENAI_MODEL", "deepseek-chat")
+    base_url = os.environ.get("OPENAI_BASE_URL", DEEPSEEK_BASE_URL_DEFAULT)
+    if not (_HAS_OPENAI and api_key and model):
+        return None
+
+    client_kwargs = {"api_key": api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = OpenAI(**client_kwargs)
+
+    judge_payload = {
+        "extracted_text": extracted_text or "",
+        "image_features": image_features,
+        "benign_argument": benign_argument,
+        "harmful_argument": harmful_argument,
+    }
+    messages = [
+        {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(judge_payload, ensure_ascii=False)},
+    ]
+    if image_path:
+        image_part = _build_inline_image_part(image_path)
+        if image_part is not None:
+            messages[1] = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": json.dumps(judge_payload, ensure_ascii=False)},
+                    image_part,
+                ],
+            }
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=1200,
+        )
+        payload = _parse_json_block(response.choices[0].message.content)
+        if payload is None:
+            return None
+        return {
+            "is_harmful": bool(payload.get("is_harmful", False)),
+            "harm_score": float(payload.get("harm_score", 0.0)),
+            "categories": payload.get("categories", []),
+            "justification": str(payload.get("justification", "")).strip(),
+            "selected_side": str(payload.get("selected_side", "")).strip(),
+            "judge_reasoning": str(payload.get("judge_reasoning", "")).strip(),
+        }
+    except Exception:
+        logger.exception("ExplainHM judge failed")
+        return None
+
+
+def _build_debate_user_content(extracted_text, image_features, image_path,
+                               include_image):
+    payload = {
+        "task": "analyse meme and produce rationale",
+        "extracted_text": extracted_text or "",
+        "image_features": image_features,
+    }
+    if include_image and image_path:
+        image_part = _build_inline_image_part(image_path)
+        if image_part is not None:
+            return [
+                {"type": "text", "text": json.dumps(payload, ensure_ascii=False)},
+                image_part,
+            ]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _build_inline_image_part(image_path):
+    try:
+        with open(image_path, "rb") as fh:
+            img_bytes = fh.read()
+    except OSError:
+        logger.warning("Cannot read image for inline content: %s", image_path)
+        return None
+
+    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+    ext = image_path.rsplit(".", 1)[-1].lower()
+    mime = _IMAGE_MIME_TYPES.get(ext, "jpeg")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/{mime};base64,{img_b64}"},
+    }
+
+
+def _call_and_parse_classification(client, *, model, messages,
+                                   temperature, max_tokens, log_prefix):
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         content = response.choices[0].message.content
         return _parse_response(content)
     except Exception:
-        logger.exception("Vision-based meme analysis failed for %s", image_path)
+        logger.exception("%s failed", log_prefix)
+        return None
+
+
+def _parse_json_block(raw):
+    cleaned = (raw or "").strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n", 1)
+        cleaned = lines[1] if len(lines) > 1 else ""
+    if cleaned.endswith("```"):
+        cleaned = cleaned.rsplit("```", 1)[0]
+    cleaned = cleaned.strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        logger.warning("Model returned invalid JSON block: %s", cleaned[:180])
         return None
 
 
@@ -250,6 +475,59 @@ Rules:
 - Consider context, sarcasm, and satire.
 - Always provide a thorough justification regardless of the classification.
 - Return ONLY valid JSON, no markdown fences, no extra text.
+"""
+
+
+_DEBATER_BENIGN_SYSTEM_PROMPT = """\
+You are the benign-side debater in harmful meme analysis.
+
+Goal: argue that the meme is NOT harmful, using evidence from image/text/context.
+
+Return ONLY JSON with keys:
+{
+    "confidence": <float 0.0-1.0>,
+    "rationale": "<2-5 sentence argument for non-harmful interpretation>",
+    "evidence": ["<short evidence item>", "..."]
+}
+"""
+
+
+_DEBATER_HARMFUL_SYSTEM_PROMPT = """\
+You are the harmful-side debater in harmful meme analysis.
+
+Goal: argue that the meme IS harmful, using evidence from image/text/context,
+including implicit hate, discrimination, dehumanization, misinformation, or
+violent framing if present.
+
+Return ONLY JSON with keys:
+{
+    "confidence": <float 0.0-1.0>,
+    "rationale": "<2-5 sentence argument for harmful interpretation>",
+    "evidence": ["<short evidence item>", "..."]
+}
+"""
+
+
+_JUDGE_SYSTEM_PROMPT = """\
+You are the debate judge for harmful meme detection.
+
+Input includes:
+- extracted_text
+- image_features
+- benign_argument
+- harmful_argument
+
+Choose which side is more convincing and output a final decision.
+
+Return ONLY JSON with EXACT keys:
+{
+    "is_harmful": true/false,
+    "harm_score": <float 0.0-1.0>,
+    "categories": ["Hate Speech"|"Violence / Threats"|"Cyberbullying / Harassment"|"Sexual / Explicit Content"|"Self-Harm / Suicide"|"Misinformation"|"Other Harmful Content"],
+    "selected_side": "benign"|"harmful",
+    "judge_reasoning": "<why one side wins>",
+    "justification": "<final moderation explanation>"
+}
 """
 
 

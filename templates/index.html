@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
     <h1>Harmful Meme Detection System</h1>
-    <p>Upload a meme image to analyse its visual and textual content for harmful material. The system uses <strong>LLM-powered analysis</strong> combined with image processing and text extraction to classify memes and explain its reasoning.</p>
+    <p>Upload a meme image to analyse harmful intent with an <strong>ExplainHM-style pipeline</strong>. The system now shows two AI viewpoints (DeepSeek vs Aliyun) and then produces a final explainable decision.</p>
 </section>
 
 <section class="upload-section">
@@ -22,20 +22,20 @@
     <h2>How It Works</h2>
     <div class="feature-grid">
         <div class="feature-card">
-            <h3>🖼️ Image Processing</h3>
-            <p>Extracts visual features (colours, contrast, text-region detection) and performs OCR to read embedded text.</p>
+            <h3>🖼️ Multimodal Extraction</h3>
+            <p>The system extracts meme text (OCR / vision), plus image features such as contrast, brightness, and text-region signals.</p>
         </div>
         <div class="feature-card">
-            <h3>📝 Text Processing</h3>
-            <p>Analyses extracted text against a curated harmful-keyword database with regex pattern matching.</p>
+            <h3>🟦 DeepSeek View (Benign Side)</h3>
+            <p>DeepSeek generates a rationale from the "not harmful" perspective, explaining why the meme may be interpreted safely.</p>
         </div>
         <div class="feature-card">
-            <h3>🤖 LLM Analysis</h3>
-            <p>Leverages a Large Language Model to deeply understand context, sarcasm, and subtle harmful intent.</p>
+            <h3>🟥 Aliyun View (Harmful Side)</h3>
+            <p>Aliyun vision model generates a rationale from the "harmful" perspective, focusing on implicit hate, discrimination, or misinformation cues.</p>
         </div>
         <div class="feature-card">
-            <h3>⚖️ Classification &amp; Justification</h3>
-            <p>Provides a clear harmful / not-harmful verdict with a detailed, human-readable justification.</p>
+            <h3>⚖️ Final Decision &amp; Explanation</h3>
+            <p>A final judge combines both AI rationales (and optional small-model refinement) to output the final label and transparent explanation.</p>
         </div>
     </div>
 </section>

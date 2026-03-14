@@ -28,6 +28,57 @@ def _allowed_file(filename):
     )
 
 
+def _hydrate_record_explanations(record):
+    """Fill missing debate explanations for legacy records."""
+    if not isinstance(record, dict):
+        return record
+
+    justification = (record.get("justification") or "").strip()
+    extracted_text = (record.get("extracted_text") or "").strip()
+    is_harmful = bool(record.get("is_harmful"))
+
+    snippet = extracted_text
+    if len(snippet) > 220:
+        snippet = snippet[:220] + "..."
+    quoted = f' Observed text: "{snippet}".' if snippet else ""
+
+    if not record.get("pro_rationale"):
+        if is_harmful:
+            record["pro_rationale"] = (
+                "Benign-side interpretation: The content may be interpreted as "
+                "satire, personal opinion, or ambiguous humor; this perspective "
+                "does not confirm targeted hate by itself."
+                + quoted
+            )
+        else:
+            record["pro_rationale"] = (
+                justification
+                or "Benign-side interpretation: No strong hateful intent is "
+                "supported by the current evidence."
+            )
+
+    if not record.get("con_rationale"):
+        if is_harmful:
+            record["con_rationale"] = (
+                justification
+                or "Harmful-side interpretation: The meme contains cues that may "
+                "promote hate, discrimination, or harmful misinformation."
+            )
+        else:
+            record["con_rationale"] = (
+                "Harmful-side interpretation: Some cues could be seen as risky, "
+                "but evidence is limited and remains below harmful threshold."
+                + quoted
+            )
+
+    if not record.get("judge_reasoning"):
+        record["judge_reasoning"] = justification or "Final decision based on combined evidence and risk score."
+    if not record.get("judge_side"):
+        record["judge_side"] = "harmful" if is_harmful else "benign"
+
+    return record
+
+
 @app.route("/")
 def index():
     """Landing page with meme upload form."""
@@ -77,6 +128,11 @@ def analyse():
         categories=result["categories"],
         justification=result["justification"],
         image_features=result["image_features"],
+        analysis_method=result.get("analysis_method"),
+        pro_rationale=result.get("pro_rationale"),
+        con_rationale=result.get("con_rationale"),
+        judge_reasoning=result.get("judge_reasoning"),
+        judge_side=result.get("judge_side"),
     )
 
     return redirect(url_for("result", record_id=record_id))
@@ -90,6 +146,7 @@ def result(record_id):
         flash("Analysis not found.", "error")
         return redirect(url_for("index"))
 
+    record = _hydrate_record_explanations(record)
     record["categories_list"] = json.loads(record["categories"] or "[]")
     record["image_features_dict"] = json.loads(record["image_features"] or "{}")
     return render_template("result.html", record=record)

@@ -36,8 +36,33 @@
                 <p class="no-text">No text could be extracted from the image.</p>
                 {% endif %}
 
-                <h3>Justification</h3>
-                <div class="justification">{{ record.justification | replace('\n', '<br>') | safe }}</div>
+                <h3>Positive Explanation (DeepSeek)</h3>
+                {% if record.pro_rationale %}
+                <div class="justification">{{ record.pro_rationale | replace('\n', '<br>') | safe }}</div>
+                {% else %}
+                <p class="no-text">No positive-side rationale generated for this record.</p>
+                {% endif %}
+
+                <h3>Negative Explanation (Aliyun)</h3>
+                {% if record.con_rationale %}
+                <div class="justification">{{ record.con_rationale | replace('\n', '<br>') | safe }}</div>
+                {% else %}
+                <p class="no-text">No negative-side rationale generated for this record.</p>
+                {% endif %}
+
+                <h3>Final Conclusion</h3>
+
+                {% if record.analysis_method %}
+                <p class="final-meta"><span class="tag">Method: {{ record.analysis_method }}</span></p>
+                {% endif %}
+
+                {% if record.judge_side %}
+                <p class="final-meta"><span class="tag">Judge Selected: {{ record.judge_side }}</span></p>
+                {% endif %}
+
+                {% if record.judge_reasoning %}
+                <div class="justification">{{ record.judge_reasoning | replace('\n', '<br>') | safe }}</div>
+                {% endif %}
 
                 <h3>Image Features</h3>
                 <table class="features-table">

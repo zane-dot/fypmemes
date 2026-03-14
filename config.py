@@ -1,6 +1,14 @@
 import os
 
+try:
+	from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency in runtime only
+	load_dotenv = None
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+if load_dotenv is not None:
+	load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 DATABASE_PATH = os.path.join(BASE_DIR, "data", "memes.db")

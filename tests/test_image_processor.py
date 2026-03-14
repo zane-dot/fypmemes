@@ -207,6 +207,74 @@ def test_extract_text_vision_api_fallback_to_easyocr(tmp_path):
     assert result == "easyocr text"
 
 
+def test_extract_text_via_vision_uses_vision_api_key(tmp_path):
+    """Vision OCR should work with OPENAI_VISION_API_KEY only."""
+    import os
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
+
+    env = {
+        "OPENAI_VISION_API_KEY": "vision-key",
+        "OPENAI_VISION_MODEL": "qwen-vl-plus",
+        "OPENAI_VISION_BASE_URL": "https://example.com/v1",
+    }
+
+    class _FakeMessage:
+        content = "vision text"
+
+    class _FakeChoice:
+        message = _FakeMessage()
+
+    class _FakeResp:
+        choices = [_FakeChoice()]
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            return _FakeResp()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeClient:
+        chat = _FakeChat()
+
+        def __init__(self, **kwargs):
+            pass
+
+    with mock.patch.dict(os.environ, env, clear=True), \
+         mock.patch.object(ip, "_HAS_OPENAI", True), \
+         mock.patch.object(ip, "_OpenAI", _FakeClient):
+        result = ip._extract_text_via_vision(str(path))
+
+    assert result == "vision text"
+
+
+def test_extract_text_via_tesseract_ensemble_uses_english_first(tmp_path):
+    import processors.image_processor as ip
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (120, 120), color=(255, 255, 255)).save(str(path))
+
+    calls = []
+
+    def _fake_tesseract(_img, lang=None, config=None):
+        calls.append((lang, config))
+        if lang == "eng":
+            return "hate speech"
+        return ""
+
+    with mock.patch.object(ip, "_HAS_TESSERACT", True), \
+         mock.patch("processors.image_processor.pytesseract", create=True) as mock_ts:
+        mock_ts.image_to_string.side_effect = _fake_tesseract
+        text = ip._extract_text_via_tesseract_ensemble(str(path))
+
+    assert "hate speech" in text
+    assert calls, "Expected tesseract to be called"
+    assert calls[0][0] == "eng"
+
+
 def test_preprocess_for_ocr_upscales_small_images(tmp_path):
     """Small images are upscaled before being fed to OCR."""
     import numpy as np
@@ -229,7 +297,10 @@ def test_extract_text_via_vision_returns_none_without_api_key(tmp_path):
     path = tmp_path / "img.png"
     Image.new("RGB", (100, 100), color=(255, 255, 255)).save(str(path))
 
-    env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in {"OPENAI_API_KEY", "OPENAI_VISION_API_KEY"}
+    }
     with mock.patch.dict(os.environ, env, clear=True):
         result = ip._extract_text_via_vision(str(path))
 
@@ -339,8 +410,8 @@ def test_extract_text_falls_back_to_pytesseract_when_easyocr_returns_empty(tmp_p
 
     import processors.image_processor as ip
     mock_reader = mock.MagicMock()
-    # All seven EasyOCR passes return empty.
-    mock_reader.readtext.side_effect = [[], [], [], [], [], [], []]
+    # All seven EasyOCR passes + three meme-band passes return empty.
+    mock_reader.readtext.side_effect = [[], [], [], [], [], [], [], [], [], []]
 
     with mock.patch.object(ip, "_HAS_EASYOCR", True), \
          mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
@@ -351,7 +422,7 @@ def test_extract_text_falls_back_to_pytesseract_when_easyocr_returns_empty(tmp_p
         result = extract_text(str(path))
 
     assert result == "tesseract fallback"
-    assert mock_ts.image_to_string.call_count == 1
+    assert mock_ts.image_to_string.call_count >= 1
 
 
 def test_preprocess_for_ocr_high_contrast_returns_rgb_array(tmp_path):
@@ -525,6 +596,32 @@ def test_extract_text_uses_saturation_fallback(tmp_path):
 
     assert result == "saturation text"
     assert mock_reader.readtext.call_count == 7
+
+
+def test_normalise_extracted_text_dedupes_adjacent_tokens():
+    import processors.image_processor as ip
+
+    text = "Hello   Hello   world  world"
+    assert ip._normalise_extracted_text(text) == "Hello world"
+
+
+def test_extract_text_uses_meme_band_fallback(tmp_path):
+    """When first seven passes are empty, targeted meme-band OCR is attempted."""
+    path = tmp_path / "img.png"
+    Image.new("RGB", (500, 300), color=(240, 240, 240)).save(str(path))
+
+    import processors.image_processor as ip
+    mock_reader = mock.MagicMock()
+    # 7 base passes empty, then 3 band passes (top/middle/bottom); top returns text.
+    mock_reader.readtext.side_effect = [[], [], [], [], [], [], [], ["top text"], [], []]
+
+    with mock.patch.object(ip, "_HAS_EASYOCR", True), \
+         mock.patch.object(ip, "_get_easyocr_reader", return_value=mock_reader), \
+         mock.patch.object(ip, "_extract_text_via_vision", return_value=None):
+        result = extract_text(str(path))
+
+    assert result == "top text"
+    assert mock_reader.readtext.call_count >= 8
 
 
 def test_has_text_region_coloured_background_heuristic(tmp_path):

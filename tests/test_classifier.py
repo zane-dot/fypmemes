@@ -2,7 +2,14 @@
 
 import json
 
+import pytest
+
 from models.classifier import classify, _keyword_classify, _build_justification
+
+
+@pytest.fixture(autouse=True)
+def _disable_explainhm(monkeypatch):
+    monkeypatch.setenv("EXPLAINHM_ENABLED", "0")
 
 
 def _safe_text_result():

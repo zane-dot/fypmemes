@@ -55,6 +55,89 @@ _IMAGE_MIME_TYPES = {
     "gif": "gif", "webp": "webp",
 }
 
+_TESSERACT_LANGS_EN_FIRST = ["eng", "eng+chi_sim+chi_tra"]
+_TESSERACT_PSM_MODES = [7, 6, 11]
+
+
+def _normalise_extracted_text(text):
+    """Clean OCR output by removing excessive whitespace and duplicates."""
+    if not text:
+        return ""
+
+    cleaned = " ".join(str(text).split())
+    if not cleaned:
+        return ""
+
+    tokens = cleaned.split(" ")
+    deduped = []
+    for token in tokens:
+        if not deduped or deduped[-1].lower() != token.lower():
+            deduped.append(token)
+    return " ".join(deduped)
+
+
+def _merge_text_candidates(candidates):
+    """Merge OCR candidates while deduplicating near-identical fragments."""
+    merged = []
+    seen = set()
+
+    for candidate in candidates:
+        normalised = _normalise_extracted_text(candidate)
+        if not normalised:
+            continue
+        key = normalised.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(normalised)
+
+    return _normalise_extracted_text(" ".join(merged))
+
+
+def _extract_text_from_meme_bands(reader, image_path):
+    """OCR targeted top/middle/bottom bands for classic meme text placement."""
+    try:
+        img = Image.open(image_path).convert("RGB")
+    except Exception:
+        return ""
+
+    w, h = img.size
+    if w == 0 or h == 0:
+        return ""
+
+    # Typical meme text lives in top and bottom bands; include middle as backup.
+    band_specs = [
+        (0.0, 0.0, 1.0, 0.30),
+        (0.0, 0.35, 1.0, 0.65),
+        (0.0, 0.70, 1.0, 1.0),
+    ]
+
+    texts = []
+    for x1r, y1r, x2r, y2r in band_specs:
+        crop = img.crop((int(w * x1r), int(h * y1r), int(w * x2r), int(h * y2r)))
+        cw, ch = crop.size
+        if cw < _OCR_MIN_DIM or ch < _OCR_MIN_DIM:
+            scale = max(_OCR_MIN_DIM / max(cw, 1), _OCR_MIN_DIM / max(ch, 1))
+            crop = crop.resize((int(cw * scale), int(ch * scale)), Image.LANCZOS)
+
+        crop = ImageEnhance.Contrast(crop).enhance(2.2)
+        crop = crop.filter(ImageFilter.SHARPEN)
+        crop_arr = np.array(crop)
+
+        band_results = reader.readtext(
+            crop_arr,
+            detail=0,
+            paragraph=False,
+            text_threshold=0.28,
+            low_text=0.25,
+            adjust_contrast=0.6,
+            min_size=2,
+        )
+        if band_results:
+            texts.append(" ".join(band_results))
+
+    return _merge_text_candidates(texts)
+
 
 def _get_easyocr_reader():
     """Return (and lazily initialise) the shared EasyOCR reader.
@@ -208,7 +291,8 @@ def _extract_text_via_vision(image_path):
     """
     if not _HAS_OPENAI:
         return None
-    api_key = os.environ.get("OPENAI_API_KEY")
+    # Allow a separate vision provider/key from text LLM.
+    api_key = os.environ.get("OPENAI_VISION_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return None
 
@@ -230,7 +314,9 @@ def _extract_text_via_vision(image_path):
     if not resolved_model:
         return None
 
-    resolved_base = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
+    resolved_base = os.environ.get("OPENAI_VISION_BASE_URL") or os.environ.get(
+        "OPENAI_BASE_URL", "https://api.deepseek.com"
+    )
 
     client_kwargs = {"api_key": api_key}
     if resolved_base:
@@ -247,10 +333,10 @@ def _extract_text_via_vision(image_path):
                     {
                         "type": "text",
                         "text": (
-                            "Extract all text visible in this meme image. "
-                            "Return only the extracted text with no extra "
-                            "commentary. If no text is present, return an "
-                            "empty string."
+                            "Extract ALL English text visible in this meme image "
+                            "as accurately as possible. Preserve casing and "
+                            "punctuation. Return ONLY the extracted text with no "
+                            "commentary. If no text is present, return an empty string."
                         ),
                     },
                     {
@@ -267,6 +353,59 @@ def _extract_text_via_vision(image_path):
     except Exception:
         logger.warning("Vision API OCR failed for %s", image_path, exc_info=True)
         return None
+
+
+def _extract_text_via_tesseract_ensemble(image_path):
+    """Run multiple English-first Tesseract passes and merge candidates."""
+    if not _HAS_TESSERACT:
+        return ""
+
+    try:
+        base_img = Image.open(image_path).convert("RGB")
+    except Exception:
+        return ""
+
+    w, h = base_img.size
+    if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
+        scale = max(_OCR_MIN_DIM / max(w, 1), _OCR_MIN_DIM / max(h, 1))
+        base_img = base_img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    # Build candidate image variants.
+    gray = base_img.convert("L")
+    gray = ImageEnhance.Contrast(gray).enhance(2.0)
+    gray_arr = np.array(gray)
+    threshold = int(np.median(gray_arr))
+    binary = Image.fromarray(((gray_arr > threshold).astype(np.uint8) * 255))
+    inv_binary = ImageOps.invert(binary)
+
+    bw, bh = base_img.size
+    top_band = base_img.crop((0, 0, bw, int(bh * 0.32)))
+    bottom_band = base_img.crop((0, int(bh * 0.68), bw, bh))
+
+    variants = [base_img, gray, binary.convert("RGB"), inv_binary.convert("RGB"), top_band, bottom_band]
+    texts = []
+
+    for variant in variants:
+        if variant.width < _OCR_MIN_DIM or variant.height < _OCR_MIN_DIM:
+            scale = max(_OCR_MIN_DIM / max(variant.width, 1), _OCR_MIN_DIM / max(variant.height, 1))
+            variant = variant.resize((int(variant.width * scale), int(variant.height * scale)), Image.LANCZOS)
+
+        for lang in _TESSERACT_LANGS_EN_FIRST:
+            for psm in _TESSERACT_PSM_MODES:
+                config = (
+                    f"--oem 3 --psm {psm} "
+                    "-c preserve_interword_spaces=1 "
+                    "-c tessedit_char_blacklist=\\|"
+                )
+                try:
+                    text = pytesseract.image_to_string(variant, lang=lang, config=config)
+                except Exception:
+                    continue
+                text = _normalise_extracted_text(text)
+                if text:
+                    texts.append(text)
+
+    return _merge_text_candidates(texts)
 
 
 def extract_text(image_path):
@@ -316,7 +455,7 @@ def extract_text(image_path):
                 adjust_contrast=0.5,
                 min_size=2,
             )
-            text = " ".join(results).strip()
+            text = _normalise_extracted_text(" ".join(results))
             if text:
                 return text
             # If paragraph mode returned nothing, retry without paragraph
@@ -330,7 +469,7 @@ def extract_text(image_path):
                 adjust_contrast=0.5,
                 min_size=2,
             )
-            text = " ".join(results_flat).strip()
+            text = _normalise_extracted_text(" ".join(results_flat))
             if text:
                 return text
             # Third EasyOCR attempt: binarised preprocessing is more robust
@@ -344,7 +483,7 @@ def extract_text(image_path):
                 low_text=0.3,
                 min_size=2,
             )
-            text = " ".join(results_bin).strip()
+            text = _normalise_extracted_text(" ".join(results_bin))
             if text:
                 return text
             # Fourth attempt: high-contrast preprocessing helps with text on
@@ -358,7 +497,7 @@ def extract_text(image_path):
                 low_text=0.3,
                 min_size=2,
             )
-            text = " ".join(results_hc).strip()
+            text = _normalise_extracted_text(" ".join(results_hc))
             if text:
                 return text
             # Fifth attempt: inverted binarised image handles light-coloured
@@ -371,7 +510,7 @@ def extract_text(image_path):
                 low_text=0.3,
                 min_size=2,
             )
-            text = " ".join(results_inv).strip()
+            text = _normalise_extracted_text(" ".join(results_inv))
             if text:
                 return text
             # Sixth attempt: histogram-equalised image helps with low-contrast
@@ -386,7 +525,7 @@ def extract_text(image_path):
                 low_text=0.3,
                 min_size=2,
             )
-            text = " ".join(results_eq).strip()
+            text = _normalise_extracted_text(" ".join(results_eq))
             if text:
                 return text
             # Seventh attempt: colour-saturation map highlights text whose
@@ -401,9 +540,14 @@ def extract_text(image_path):
                 low_text=0.3,
                 min_size=2,
             )
-            text = " ".join(results_sat).strip()
+            text = _normalise_extracted_text(" ".join(results_sat))
             if text:
                 return text
+
+            # Eighth attempt: targeted OCR on classic meme text bands.
+            text_bands = _extract_text_from_meme_bands(reader, image_path)
+            if text_bands:
+                return text_bands
         except Exception:
             logger.exception("EasyOCR failed for %s", image_path)
             # Fall through to the pytesseract fallback below.
@@ -412,16 +556,10 @@ def extract_text(image_path):
     # Used when EasyOCR is unavailable OR when all EasyOCR passes return empty.
     if _HAS_TESSERACT:
         try:
-            img = Image.open(image_path)
-            # Apply the same preprocessing for consistency.
-            w, h = img.size
-            if w < _OCR_MIN_DIM or h < _OCR_MIN_DIM:
-                scale = max(_OCR_MIN_DIM / w, _OCR_MIN_DIM / h)
-                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-            img = ImageEnhance.Contrast(img).enhance(_OCR_CONTRAST_FACTOR)
-            # Request both English and Chinese (simplified + traditional).
-            text = pytesseract.image_to_string(img, lang="eng+chi_sim+chi_tra")
-            return text.strip()
+            text = _extract_text_via_tesseract_ensemble(image_path)
+            if text:
+                return text
+            return ""
         except Exception:
             logger.exception("pytesseract OCR failed for %s", image_path)
             return ""

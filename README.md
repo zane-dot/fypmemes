@@ -11,6 +11,7 @@ An automated system that analyses both the visual and textual content of memes t
 - **Harmfulness Classification** – Produces a harmful / not-harmful verdict with a 0–1 score.
 - **Justification** – Generates a detailed, human-readable explanation of why a meme is (or is not) harmful.
 - **History** – All analyses are stored in an SQLite database and viewable in the web UI.
+- **ExplainHM-style Pipeline** – Uses a three-act workflow: (1) debate generation, (2) LLM judge decision, (3) optional small-model refinement.
 
 ## Quick Start
 
@@ -22,16 +23,20 @@ pip install -r requirements.txt
 #    Ubuntu/Debian: sudo apt install tesseract-ocr
 #    macOS:         brew install tesseract
 
-# 3. Set your DeepSeek API key (required for LLM-powered analysis)
+# 3. Configure debate models
+# Positive side (benign argument): DeepSeek
 export OPENAI_API_KEY="sk-your-deepseek-key-here"
+export OPENAI_BASE_URL="https://api.deepseek.com"
+export OPENAI_MODEL="deepseek-chat"
 
-# (Optional) Use a different provider / model
-# export OPENAI_BASE_URL="https://api.openai.com/v1"
-# export OPENAI_MODEL="gpt-4o-mini"
+# Negative side (harmful argument): Aliyun/Qwen
+export OPENAI_VISION_API_KEY="sk-your-aliyun-key-here"
+export OPENAI_VISION_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+export OPENAI_VISION_MODEL="qwen-vl-plus"
 
-# (Optional) Use a vision-capable model for more accurate OCR text extraction
-# export OPENAI_VISION_MODEL="gpt-4o"         # OpenAI
-# export OPENAI_VISION_MODEL="deepseek-vl2"   # DeepSeek
+# Optional switches
+# export EXPLAINHM_ENABLED="1"      # default 1, set 0 to disable debate pipeline
+# export SMALL_MODEL_PATH="data/small_decider.joblib"
 
 # 4. Run the application
 python app.py
@@ -76,7 +81,30 @@ python -m pytest tests/ -v
 | `OPENAI_API_KEY`      | DeepSeek (or compatible) API key                              | *(none)*                         |
 | `OPENAI_BASE_URL`     | API base URL                                                  | `https://api.deepseek.com`       |
 | `OPENAI_MODEL`        | Model for text-based LLM analysis; also used as a vision fallback when `OPENAI_VISION_MODEL` is unset and OCR returns nothing (see note below) | `deepseek-chat` |
-| `OPENAI_VISION_MODEL` | Vision model for direct image analysis (e.g. `gpt-4o`, `deepseek-vl2`). Strongly recommended – see note below. | *(none)* |
+| `OPENAI_VISION_MODEL` | Negative debater model (Aliyun/Qwen, e.g. `qwen-vl-plus`) | *(none)* |
+| `OPENAI_VISION_API_KEY` | Negative debater API key (Aliyun) | *(none)* |
+| `OPENAI_VISION_BASE_URL` | Negative debater API base URL | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `EXPLAINHM_ENABLED` | Enable ExplainHM debate pipeline | `1` |
+| `SMALL_MODEL_PATH` | Trained stage-3 small-model bundle path | `data/small_decider.joblib` |
 | `SECRET_KEY`          | Flask session secret                                          | dev default                      |
 
-> **Tip – memes with hard-to-read text:** Local OCR (EasyOCR / pytesseract) can struggle with low-contrast text on neutral backgrounds (e.g. white, beige, or brown).  Set `OPENAI_VISION_MODEL` to a vision-capable model such as `gpt-4o` or `deepseek-vl2` to send the image *directly* to the LLM, which reads the embedded text and analyses it for harmful content in a single pass — the approach used by most harmful-meme detection platforms.  If `OPENAI_VISION_MODEL` is not set but `OPENAI_MODEL` is vision-capable (e.g. `gpt-4o`), the system will automatically attempt vision analysis as a fallback when OCR fails and a text region is detected.
+## Training a small model (ExplainHM Act-3)
+
+1) Build a training dataset with debate outputs:
+
+```bash
+python scripts/build_explainhm_training_data.py \
+	--jsonl data/hateful_memes_dataset/train.jsonl \
+	--image-root data/hateful_memes_dataset \
+	--output data/explainhm_train.jsonl
+```
+
+2) Train the lightweight decider:
+
+```bash
+python scripts/train_small_decider.py \
+	--input data/explainhm_train.jsonl \
+	--output data/small_decider.joblib
+```
+
+3) Restart app and it will automatically use the trained small model when present.

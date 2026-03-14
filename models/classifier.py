@@ -20,9 +20,12 @@ import os
 from processors.llm_processor import (
     analyse_meme,
     analyse_meme_with_vision,
+    is_explainhm_available,
     is_available as llm_available,
     is_vision_available as llm_vision_available,
+    run_explainhm_pipeline,
 )
+from models.small_model import is_small_model_available, predict_with_small_model
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +52,58 @@ def classify(text_result, image_features, extracted_text="", image_path=None):
     -------
     dict
     """
-    # ---- Try vision-based analysis first (most accurate for memes) -----
+    # ---- ExplainHM debate + judge + small model (primary) --------------
+    if _explainhm_enabled() and is_explainhm_available():
+        explainhm_result = run_explainhm_pipeline(
+            extracted_text,
+            image_features,
+            image_path=image_path,
+        )
+        if explainhm_result is not None:
+            final_result = _format_llm_result(explainhm_result, image_features)
+            final_result["pro_rationale"] = explainhm_result.get("pro_rationale", "")
+            final_result["con_rationale"] = explainhm_result.get("con_rationale", "")
+            final_result["judge_reasoning"] = explainhm_result.get("judge_reasoning", "")
+            final_result["judge_side"] = explainhm_result.get("judge_side", "")
+            final_result["analysis_method"] = "explainhm_judge"
+
+            if is_small_model_available():
+                small_result = predict_with_small_model({
+                    "extracted_text": extracted_text,
+                    "pro_rationale": final_result["pro_rationale"],
+                    "con_rationale": final_result["con_rationale"],
+                    "judge_reasoning": final_result["judge_reasoning"],
+                    "judge_harm_score": final_result["harm_score"],
+                    "keyword_score": text_result.get("overall_score", 0.0),
+                    "has_text_region": 1.0 if image_features.get("has_text_region") else 0.0,
+                    "brightness": float(image_features.get("brightness", 0.0) or 0.0),
+                    "contrast": float(image_features.get("contrast", 0.0) or 0.0),
+                    "color_variance": float(image_features.get("color_variance", 0.0) or 0.0),
+                })
+                if small_result is not None:
+                    final_score = round(
+                        (0.65 * small_result["harm_score"]) +
+                        (0.35 * final_result["harm_score"]),
+                        4,
+                    )
+                    final_result["harm_score"] = final_score
+                    final_result["is_harmful"] = final_score >= 0.5
+                    final_result["analysis_method"] = "explainhm_small_model"
+                    final_result["justification"] = (
+                        final_result["justification"]
+                        + "\n\nSmall-model refinement score: "
+                        + f"{small_result['harm_score']:.2f}."
+                    )
+            return _ensure_debate_fields(final_result, extracted_text)
+
+    # ---- Try vision-based analysis first (legacy path) -----------------
     if image_path and llm_vision_available():
         vision_result = analyse_meme_with_vision(image_path, image_features)
         if vision_result is not None:
-            return _format_llm_result(vision_result, image_features)
+            return _ensure_debate_fields(
+                _format_llm_result(vision_result, image_features),
+                extracted_text,
+            )
         logger.warning("Vision analysis returned None – falling back to text LLM")
 
     # ---- OCR-failure vision fallback ------------------------------------
@@ -80,17 +130,26 @@ def classify(text_result, image_features, extracted_text="", image_path=None):
                 image_path, image_features, model=fallback_model,
             )
             if vision_result is not None:
-                return _format_llm_result(vision_result, image_features)
+                return _ensure_debate_fields(
+                    _format_llm_result(vision_result, image_features),
+                    extracted_text,
+                )
 
     # ---- Try text-only LLM analysis ------------------------------------
     if llm_available():
         llm_result = analyse_meme(extracted_text, image_features)
         if llm_result is not None:
-            return _format_llm_result(llm_result, image_features)
+            return _ensure_debate_fields(
+                _format_llm_result(llm_result, image_features),
+                extracted_text,
+            )
         logger.warning("LLM analysis returned None – falling back to keywords")
 
     # ---- Keyword / pattern fallback ------------------------------------
-    return _keyword_classify(text_result, image_features)
+    return _ensure_debate_fields(
+        _keyword_classify(text_result, image_features),
+        extracted_text,
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -107,6 +166,10 @@ def _format_llm_result(llm_result, image_features):
         "image_features": json.dumps(image_features),
         "analysis_method": "llm",
     }
+
+
+def _explainhm_enabled():
+    return os.environ.get("EXPLAINHM_ENABLED", "1") != "0"
 
 
 # ------------------------------------------------------------------ #
@@ -137,6 +200,61 @@ def _keyword_classify(text_result, image_features):
         "image_features": json.dumps(image_features),
         "analysis_method": "keyword",
     }
+
+
+def _ensure_debate_fields(result, extracted_text=""):
+    """Ensure positive/negative explanations are always present for UI display."""
+    if result.get("pro_rationale") and result.get("con_rationale"):
+        if not result.get("judge_reasoning"):
+            result["judge_reasoning"] = result.get("justification", "")
+        if not result.get("judge_side"):
+            result["judge_side"] = "harmful" if result.get("is_harmful") else "benign"
+        return result
+
+    justification = (result.get("justification") or "").strip()
+    is_harmful = bool(result.get("is_harmful"))
+    snippet = (extracted_text or "").strip()
+    if len(snippet) > 220:
+        snippet = snippet[:220] + "..."
+    quoted = f' Observed text: "{snippet}".' if snippet else ""
+
+    if not result.get("pro_rationale"):
+        if is_harmful:
+            result["pro_rationale"] = (
+                "Benign-side interpretation: The meme could be read as satire, "
+                "opinion, or ambiguous humor, and available evidence alone does "
+                "not conclusively prove a targeted hateful intent."
+                + quoted
+            )
+        else:
+            result["pro_rationale"] = (
+                justification
+                or "Benign-side interpretation: No explicit hate target or "
+                "malicious intent is strongly supported by current evidence."
+            )
+
+    if not result.get("con_rationale"):
+        if is_harmful:
+            result["con_rationale"] = (
+                justification
+                or "Harmful-side interpretation: The content includes cues that "
+                "may promote hate, discrimination, or harmful misinformation."
+            )
+        else:
+            result["con_rationale"] = (
+                "Harmful-side interpretation: Some phrases or visual cues may "
+                "appear risky, but the evidence is weak and remains below the "
+                "harmful threshold."
+                + quoted
+            )
+
+    if not result.get("judge_reasoning"):
+        result["judge_reasoning"] = justification or "Final decision based on combined evidence and risk score."
+
+    if not result.get("judge_side"):
+        result["judge_side"] = "harmful" if is_harmful else "benign"
+
+    return result
 
 
 def _build_justification(is_harmful, score, matched_categories,

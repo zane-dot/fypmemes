@@ -32,6 +32,7 @@ class TestIsAvailable:
 class TestIsVisionAvailable:
     def test_unavailable_without_key(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_VISION_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_VISION_MODEL", raising=False)
         assert is_vision_available() is False
 
@@ -42,8 +43,19 @@ class TestIsVisionAvailable:
 
     def test_unavailable_without_api_key(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_VISION_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_VISION_MODEL", "gpt-4o")
         assert is_vision_available() is False
+
+    def test_available_with_vision_api_key_and_model(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_VISION_API_KEY", "sk-vision-key")
+        monkeypatch.setenv("OPENAI_VISION_MODEL", "gpt-4o")
+        try:
+            import openai  # noqa: F401
+            assert is_vision_available() is True
+        except ImportError:
+            pytest.skip("openai not installed")
 
     def test_available_with_key_and_model(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")

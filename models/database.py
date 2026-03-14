@@ -29,24 +29,48 @@ def init_db(db_path):
             categories    TEXT,
             justification TEXT,
             image_features TEXT,
+            analysis_method TEXT,
+            pro_rationale TEXT,
+            con_rationale TEXT,
+            judge_reasoning TEXT,
+            judge_side TEXT,
             created_at    TEXT    NOT NULL
         )
         """
     )
+    # Backward-compatible migration for existing DB files.
+    existing_cols = {
+        r[1] for r in conn.execute("PRAGMA table_info(meme_analysis)").fetchall()
+    }
+    if "analysis_method" not in existing_cols:
+        conn.execute("ALTER TABLE meme_analysis ADD COLUMN analysis_method TEXT")
+    if "pro_rationale" not in existing_cols:
+        conn.execute("ALTER TABLE meme_analysis ADD COLUMN pro_rationale TEXT")
+    if "con_rationale" not in existing_cols:
+        conn.execute("ALTER TABLE meme_analysis ADD COLUMN con_rationale TEXT")
+    if "judge_reasoning" not in existing_cols:
+        conn.execute("ALTER TABLE meme_analysis ADD COLUMN judge_reasoning TEXT")
+    if "judge_side" not in existing_cols:
+        conn.execute("ALTER TABLE meme_analysis ADD COLUMN judge_side TEXT")
     conn.commit()
     conn.close()
 
 
 def save_analysis(db_path, *, filename, extracted_text, is_harmful,
-                  harm_score, categories, justification, image_features):
+                  harm_score, categories, justification, image_features,
+                  analysis_method=None, pro_rationale=None,
+                  con_rationale=None, judge_reasoning=None,
+                  judge_side=None):
     """Persist a single meme analysis record and return its id."""
     conn = get_connection(db_path)
     cur = conn.execute(
         """
         INSERT INTO meme_analysis
             (filename, extracted_text, is_harmful, harm_score,
-             categories, justification, image_features, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             categories, justification, image_features, analysis_method,
+             pro_rationale, con_rationale, judge_reasoning, judge_side,
+             created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             filename,
@@ -56,6 +80,11 @@ def save_analysis(db_path, *, filename, extracted_text, is_harmful,
             categories,
             justification,
             image_features,
+            analysis_method,
+            pro_rationale,
+            con_rationale,
+            judge_reasoning,
+            judge_side,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
