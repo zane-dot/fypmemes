@@ -74,3 +74,55 @@ def test_match_patterns_basic():
 def test_match_patterns_no_match():
     hits = _match_patterns("have a nice day", [r"kill all \w+"])
     assert hits == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for newly added keyword categories
+# ---------------------------------------------------------------------------
+
+def test_misinformation_detected_keyword():
+    result = analyse_text("vaccines cause autism according to this crisis actor", KEYWORDS_PATH)
+    assert result["is_harmful"] is True
+    labels = [m["label"] for m in result["matched_categories"]]
+    assert "Misinformation" in labels
+
+
+def test_misinformation_detected_pattern():
+    result = analyse_text("covid is a hoax, wake up sheeple", KEYWORDS_PATH)
+    assert result["is_harmful"] is True
+    labels = [m["label"] for m in result["matched_categories"]]
+    assert "Misinformation" in labels
+
+
+def test_hate_speech_new_keywords():
+    """Additional hate speech keywords added in the expanded database."""
+    result = analyse_text("white genocide is real", KEYWORDS_PATH)
+    assert result["is_harmful"] is True
+    labels = [m["label"] for m in result["matched_categories"]]
+    assert "Hate Speech" in labels
+
+
+def test_hate_speech_dehumanising_pattern():
+    result = analyse_text("blacks are naturally inferior and violent", KEYWORDS_PATH)
+    assert result["is_harmful"] is True
+    labels = [m["label"] for m in result["matched_categories"]]
+    assert "Hate Speech" in labels
+
+
+def test_self_harm_new_keywords():
+    result = analyse_text("just unalive yourself already", KEYWORDS_PATH)
+    assert result["is_harmful"] is True
+    labels = [m["label"] for m in result["matched_categories"]]
+    assert "Self-Harm / Suicide" in labels
+
+
+def test_cyberbullying_new_pattern():
+    result = analyse_text("everyone hates you and you are a burden", KEYWORDS_PATH)
+    assert result["is_harmful"] is True
+    labels = [m["label"] for m in result["matched_categories"]]
+    assert "Cyberbullying / Harassment" in labels
+
+
+def test_benign_text_not_flagged_as_misinformation():
+    result = analyse_text("The weather forecast is sunny today.", KEYWORDS_PATH)
+    assert result["is_harmful"] is False
