@@ -8,14 +8,44 @@
         "white power", "ethnic cleansing", "gas the", "lynch",
         "sand n", "towelhead", "wetback", "beaner", "chink", "gook",
         "spic", "kike", "coon", "negro", "nigger", "nigga",
-        "faggot", "tranny", "retard", "mongol"
+        "faggot", "tranny", "retard", "mongol",
+        "white genocide", "great replacement", "white supremacy",
+        "white nationalist", "neo-nazi", "neo nazi", "nazi salute",
+        "antisemitic", "anti-semitic", "jewish conspiracy", "zionist conspiracy",
+        "jewish agenda", "globalist", "soros controls",
+        "replacement theory", "kalergi plan",
+        "14 words", "88", "heil", "sieg heil",
+        "hook nosed", "hook-nosed", "big nose jew",
+        "apes", "animals", "savages", "vermin", "rats", "cockroaches",
+        "inbred", "breed like rats",
+        "islamophobia", "muslims are", "all muslims",
+        "sharia law threat", "muslim invasion", "islamic invasion",
+        "illegals", "illegal aliens", "border hoppers",
+        "dyke", "sodomite", "homo", "fag", "queer bashing",
+        "gender confused", "mentally ill transgender",
+        "women belong", "make sandwiches", "back to the kitchen",
+        "women are inferior", "female privilege", "feminazi",
+        "cripple", "spaz", "wheelchair bound", "mentally deficient",
+        "disability is fake", "disability fraud"
       ],
       "patterns": [
-        "all \\w+ are (criminals|terrorists|rapists|thieves|lazy|stupid|dirty|evil)",
+        "all \\w+ are (criminals|terrorists|rapists|thieves|lazy|stupid|dirty|evil|subhuman|animals|vermin)",
         "kill all \\w+",
         "deport all \\w+",
-        "(whites?|blacks?|jews?|muslims?) should (die|burn|leave|be killed)",
-        "\\w+ supremacy"
+        "(whites?|blacks?|jews?|muslims?|immigrants?) should (die|burn|leave|be killed|be deported|go back)",
+        "\\w+ supremacy",
+        "(blacks?|african americans?|latinos?|hispanics?|asians?|jews?|muslims?) (are |)(thieves|rapists|criminals|terrorists|monkeys|apes|savages|parasites)",
+        "(women|females?|girls?) (are|should) (inferior|submissive|slaves?|property|in the kitchen|shut up)",
+        "(gay|lesbian|transgender|trans|lgbtq?) (people|community|agenda) (destroy|ruin|infect|groom|corrupt)",
+        "\\b(jew|kike)s? (control|own|run|dominate|manipulate) (the (media|banks?|government|world|hollywood))",
+        "((black|brown|yellow|white) people|blacks?|whites?|latinos?|hispanics?|asians?|jews?|muslims?) (are naturally|are genetically|are inherently|naturally are|genetically are|inherently are) (inferior|violent|stupid|lazy|criminal|dangerous|subhuman)",
+        "send (them|\\w+) back (to \\w+)?",
+        "not (my|our) (country|people|race)",
+        "(race|ethnic|religious) (mixing|replacement|cleansing|purity)",
+        "(great )?replacement (theory|plan)",
+        "\\b(blacks?|africans?)\\b.{0,40}\\b(apes?|monkeys?|gorillas?)\\b",
+        "\\bjews?\\b.{0,40}\\b(control|own|run|behind|responsible for)\\b",
+        "\\bislam(ic)?\\b.{0,40}\\b(invasion|take(over| over)|replace|destroy|infect)\\b"
       ],
       "severity": 0.9
     },
@@ -26,14 +56,22 @@
         "kill yourself", "kys", "shoot up", "bomb threat", "mass shooting",
         "school shooting", "murder them", "slit throat", "stab",
         "beat up", "curb stomp", "execute", "hang them", "behead",
-        "genocide", "massacre", "bloodbath", "slaughter them"
+        "genocide", "massacre", "bloodbath", "slaughter them",
+        "torch them", "burn it down", "burn them", "string them up",
+        "public hanging", "lynching", "guillotine them",
+        "shooting spree", "terrorist attack", "car ramming",
+        "acid attack", "molotov", "pipe bomb",
+        "exterminate", "wipe out", "elimination", "purge",
+        "final solution"
       ],
       "patterns": [
-        "i('ll|\\s+will) (kill|murder|shoot|stab|hurt) (you|them|him|her)",
-        "(should|deserve to) (die|be killed|be shot|be beaten)",
+        "i('ll|\\s+will) (kill|murder|shoot|stab|hurt|attack|destroy) (you|them|him|her|\\w+)",
+        "(should|deserve to) (die|be killed|be shot|be beaten|be executed|be hanged)",
         "put a bullet in",
         "blow (up|them up)",
-        "(going to|gonna) (shoot|kill|hurt|attack)"
+        "(going to|gonna) (shoot|kill|hurt|attack|bomb)",
+        "(punch|kick|beat|stab|shoot|kill) (all )?(\\w+ )?(in the face|in the head|to death)",
+        "let('s| us) (kill|eliminate|eradicate|exterminate|purge) (all |the )?\\w+"
       ],
       "severity": 0.95
     },
@@ -43,13 +81,18 @@
       "keywords": [
         "ugly", "fat pig", "loser", "worthless", "nobody likes you",
         "kill yourself", "no one cares", "waste of space", "piece of trash",
-        "die already", "attention seeker", "pathetic", "disgusting"
+        "die already", "attention seeker", "pathetic", "disgusting",
+        "freak", "weirdo", "creep", "nobody wants you",
+        "you are a burden", "go away", "you are unwanted",
+        "social reject", "failure at life", "embarrassment to everyone"
       ],
       "patterns": [
-        "you (are|look|smell) (like )?(garbage|trash|ugly|disgusting|pathetic|fat|stupid)",
+        "you (are|look|smell) (like )?(garbage|trash|ugly|disgusting|pathetic|fat|stupid|worthless|disgusting)",
         "nobody (likes|loves|wants|cares about) you",
         "the world (would be|is) better without you",
-        "you should (just )?(die|disappear|kill yourself)"
+        "you should (just )?(die|disappear|kill yourself)",
+        "everyone (hates|despises|laughs at) you",
+        "your (family|parents|friends) (are ashamed|hate|regret) (of|having) you"
       ],
       "severity": 0.8
     },
@@ -58,12 +101,17 @@
       "description": "Sexually explicit or suggestive content that is inappropriate or non-consensual.",
       "keywords": [
         "rape", "molest", "pedophile", "child porn", "revenge porn",
-        "sexual assault", "grope", "flash", "upskirt", "creepshot"
+        "sexual assault", "grope", "flash", "upskirt", "creepshot",
+        "grooming", "child predator", "minor attracted",
+        "non-consensual", "sleep rape", "stealthing"
       ],
       "patterns": [
         "(she|he|they) (deserved|wanted|asked for) (it|the rape|to be raped)",
         "underage",
-        "(send|show) (me )?(nudes|pics)"
+        "(send|show) (me )?(nudes|pics)",
+        "(she|he|they) was (asking|begging) for it",
+        "(women|girls?) (owe|should give) (men|boys?) sex",
+        "age is just a number"
       ],
       "severity": 0.95
     },
@@ -73,14 +121,46 @@
       "keywords": [
         "cut yourself", "self harm", "suicide method", "how to die",
         "overdose", "end it all", "jump off", "hang yourself",
-        "slit wrists", "drink bleach"
+        "slit wrists", "drink bleach",
+        "rope yourself", "hero yourself",
+        "bleed out", "pills overdose",
+        "unalive yourself", "off yourself"
       ],
       "patterns": [
         "(just|you should) (end it|kill yourself|do it|jump)",
         "no (reason|point) (to|in) (live|living|life)",
-        "(life|world) (is )?(not worth|meaningless|pointless)"
+        "(life|world) (is )?(not worth|meaningless|pointless)",
+        "everyone (will be|would be|is) better off (without you|when you('re| are) gone)",
+        "(nobody|no one) (will|would) (miss|care about|notice) you"
       ],
       "severity": 0.9
+    },
+    "misinformation": {
+      "label": "Misinformation",
+      "description": "Content that deliberately spreads false or misleading information, including conspiracy theories and health misinformation.",
+      "keywords": [
+        "crisis actor", "false flag", "hoax shooting", "sandy hook hoax",
+        "deep state", "lizard people", "reptilian elite",
+        "flat earth", "moon landing fake", "moon landing hoax",
+        "5g causes", "5g microchip", "covid hoax", "covid fake",
+        "vaccines cause autism", "vaccine microchip", "bill gates microchip",
+        "chemtrails", "population control", "new world order",
+        "great reset agenda", "illuminati controls",
+        "election stolen", "stolen election",
+        "climate change hoax", "global warming hoax",
+        "george soros funds", "mainstream media lies",
+        "big pharma conspiracy", "cancer cure hidden"
+      ],
+      "patterns": [
+        "(they|the government|elites?) (don('t|t) want you to know|is hiding|are hiding|suppressed)",
+        "(wake up|red pill|truth about) (sheeple|people|the world)",
+        "(vaccines?|5g|chemtrails?).{0,40}(kill|poison|control|depopulate|sterilise|sterilize)",
+        "(covid|corona).{0,40}(fake|hoax|planned|engineered|lab.?made|bioweapon)",
+        "(election|voting).{0,40}(fraud|rigged|stolen|manipulated)",
+        "do (your|the) research",
+        "(media|news) (is |are )?(lying|fake|controlled|propaganda)"
+      ],
+      "severity": 0.7
     }
   }
 }
