@@ -72,6 +72,12 @@ def main():
                 image_path=image_path,
             )
             if debate is None:
+                debate = run_explainhm_pipeline(
+                    extracted_text,
+                    image_features,
+                    image_path=None,
+                )
+            if debate is None:
                 continue
 
             out = {

@@ -7,14 +7,14 @@
 </section>
 
 <section class="upload-section">
-    <form action="{{ url_for('analyse') }}" method="post" enctype="multipart/form-data" class="upload-form">
-        <label for="meme" class="file-label">
+    <form action="{{ url_for('frontend.analyse') }}" method="post" enctype="multipart/form-data" class="upload-form">
+        <label for="memes" class="file-label">
             <span class="file-icon">📁</span>
-            <span class="file-text">Choose an image file…</span>
-            <input type="file" name="meme" id="meme" accept="image/*" required>
+            <span class="file-text">Choose one or many image files…</span>
+            <input type="file" name="memes" id="memes" accept="image/*" multiple required>
         </label>
-        <p class="hint">Supported formats: PNG, JPG, JPEG, GIF, WebP (max 16 MB)</p>
-        <button type="submit" class="btn btn-primary">🔍 Analyse Meme</button>
+        <p class="hint">Supported formats: PNG, JPG, JPEG, GIF, WebP (max 16 MB each)</p>
+        <button type="submit" class="btn btn-primary">🔍 Analyse Meme(s)</button>
     </form>
 </section>
 
@@ -41,8 +41,13 @@
 </section>
 
 <script>
-document.getElementById('meme').addEventListener('change', function () {
-    var text = this.files.length ? this.files[0].name : 'Choose an image file…';
+document.getElementById('memes').addEventListener('change', function () {
+    var text = 'Choose one or many image files…';
+    if (this.files.length === 1) {
+        text = this.files[0].name;
+    } else if (this.files.length > 1) {
+        text = this.files.length + ' files selected';
+    }
     this.closest('.file-label').querySelector('.file-text').textContent = text;
 });
 </script>

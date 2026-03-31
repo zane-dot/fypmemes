@@ -20,8 +20,19 @@ def init_db(db_path):
     conn = get_connection(db_path)
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS users (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            username       TEXT    NOT NULL UNIQUE,
+            password_hash  TEXT    NOT NULL,
+            created_at     TEXT    NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS meme_analysis (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER,
             filename      TEXT    NOT NULL,
             extracted_text TEXT,
             is_harmful    INTEGER NOT NULL DEFAULT 0,
@@ -34,7 +45,8 @@ def init_db(db_path):
             con_rationale TEXT,
             judge_reasoning TEXT,
             judge_side TEXT,
-            created_at    TEXT    NOT NULL
+            created_at    TEXT    NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
         """
     )
@@ -52,12 +64,51 @@ def init_db(db_path):
         conn.execute("ALTER TABLE meme_analysis ADD COLUMN judge_reasoning TEXT")
     if "judge_side" not in existing_cols:
         conn.execute("ALTER TABLE meme_analysis ADD COLUMN judge_side TEXT")
+    if "user_id" not in existing_cols:
+        conn.execute("ALTER TABLE meme_analysis ADD COLUMN user_id INTEGER")
     conn.commit()
     conn.close()
 
 
+def create_user(db_path, *, username, password_hash):
+    """Create a user account and return its id."""
+    conn = get_connection(db_path)
+    cur = conn.execute(
+        """
+        INSERT INTO users (username, password_hash, created_at)
+        VALUES (?, ?, ?)
+        """,
+        (username, password_hash, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    user_id = cur.lastrowid
+    conn.close()
+    return user_id
+
+
+def get_user_by_username(db_path, username):
+    """Fetch user row by username."""
+    conn = get_connection(db_path)
+    row = conn.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(db_path, user_id):
+    """Fetch user row by id."""
+    conn = get_connection(db_path)
+    row = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def save_analysis(db_path, *, filename, extracted_text, is_harmful,
                   harm_score, categories, justification, image_features,
+                  user_id=None,
                   analysis_method=None, pro_rationale=None,
                   con_rationale=None, judge_reasoning=None,
                   judge_side=None):
@@ -66,13 +117,14 @@ def save_analysis(db_path, *, filename, extracted_text, is_harmful,
     cur = conn.execute(
         """
         INSERT INTO meme_analysis
-            (filename, extracted_text, is_harmful, harm_score,
+            (user_id, filename, extracted_text, is_harmful, harm_score,
              categories, justification, image_features, analysis_method,
              pro_rationale, con_rationale, judge_reasoning, judge_side,
              created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            user_id,
             filename,
             extracted_text,
             int(is_harmful),
@@ -94,21 +146,85 @@ def save_analysis(db_path, *, filename, extracted_text, is_harmful,
     return record_id
 
 
-def get_analysis(db_path, record_id):
+def get_analysis(db_path, record_id, user_id=None):
     """Fetch a single analysis by id."""
     conn = get_connection(db_path)
-    row = conn.execute(
-        "SELECT * FROM meme_analysis WHERE id = ?", (record_id,)
-    ).fetchone()
+    if user_id is None:
+        row = conn.execute(
+            "SELECT * FROM meme_analysis WHERE id = ?", (record_id,)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM meme_analysis WHERE id = ? AND user_id = ?",
+            (record_id, user_id),
+        ).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
-def get_all_analyses(db_path, limit=50):
-    """Return the most recent analyses."""
+def get_all_analyses(
+    db_path,
+    limit=50,
+    user_id=None,
+    created_date=None,
+    start_date=None,
+    end_date=None,
+    is_harmful=None,
+):
+    """Return the most recent analyses with optional filters."""
     conn = get_connection(db_path)
-    rows = conn.execute(
-        "SELECT * FROM meme_analysis ORDER BY id DESC LIMIT ?", (limit,)
-    ).fetchall()
+
+    conditions = []
+    params = []
+
+    if user_id is not None:
+        conditions.append("user_id = ?")
+        params.append(user_id)
+    if created_date:
+        conditions.append("date(created_at) = ?")
+        params.append(created_date)
+    else:
+        if start_date:
+            conditions.append("date(created_at) >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("date(created_at) <= ?")
+            params.append(end_date)
+    if is_harmful is not None:
+        conditions.append("is_harmful = ?")
+        params.append(int(bool(is_harmful)))
+
+    query = "SELECT * FROM meme_analysis"
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+
+    rows = conn.execute(query, tuple(params)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_analysis_dates(db_path, user_id=None):
+    """Return distinct analysis dates (YYYY-MM-DD), newest first."""
+    conn = get_connection(db_path)
+    if user_id is None:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT date(created_at) AS analysis_date
+            FROM meme_analysis
+            ORDER BY analysis_date DESC
+            """
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT date(created_at) AS analysis_date
+            FROM meme_analysis
+            WHERE user_id = ?
+            ORDER BY analysis_date DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    conn.close()
+    return [r["analysis_date"] for r in rows if r["analysis_date"]]

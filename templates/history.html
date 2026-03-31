@@ -4,11 +4,49 @@
 <section class="history-section">
     <h1>Analysis History</h1>
 
+    <form method="get" action="{{ url_for('frontend.history') }}" class="history-filters">
+        <div class="history-calendar-wrap">
+            <div class="history-calendar-head">
+                <button type="button" id="calendar-prev" class="btn btn-secondary btn-small">Prev</button>
+                <div class="history-calendar-jump">
+                    <label class="sr-only" for="calendar-month">Month</label>
+                    <select id="calendar-month" class="calendar-jump-select"></select>
+                    <label class="sr-only" for="calendar-year">Year</label>
+                    <select id="calendar-year" class="calendar-jump-select"></select>
+                </div>
+                <button type="button" id="calendar-next" class="btn btn-secondary btn-small">Next</button>
+            </div>
+            <div id="history-calendar" class="history-calendar" aria-label="History date calendar"></div>
+            <p id="calendar-selection" class="history-calendar-selection"></p>
+            <p class="history-calendar-legend">
+                <span class="legend-dot legend-has"></span> Has upload record
+                <span class="legend-dot legend-none"></span> No upload record
+            </p>
+        </div>
+
+        <input type="hidden" id="date" name="date" value="{{ selected_date or '' }}">
+        <input type="hidden" id="start_date" name="start_date" value="{{ start_date or '' }}">
+        <input type="hidden" id="end_date" name="end_date" value="{{ end_date or '' }}">
+
+        <div class="history-filter-item">
+            <label for="harmful">Classification</label>
+            <select id="harmful" name="harmful">
+                <option value="all" {% if (harmful_filter or 'all') == 'all' %}selected{% endif %}>All</option>
+                <option value="harmful" {% if harmful_filter == 'harmful' %}selected{% endif %}>Harmful</option>
+                <option value="safe" {% if harmful_filter == 'safe' %}selected{% endif %}>Safe</option>
+            </select>
+        </div>
+        <div class="history-filter-actions">
+            <button type="submit" class="btn btn-primary">Filter</button>
+            <a href="{{ url_for('frontend.history') }}" class="btn btn-secondary">Reset</a>
+        </div>
+    </form>
+
     {% if records %}
     <table class="history-table">
         <thead>
             <tr>
-                <th>#</th>
+                <th>ID</th>
                 <th>Preview</th>
                 <th>Classification</th>
                 <th>Score</th>
@@ -23,7 +61,7 @@
         <tbody>
             {% for r in records %}
             <tr>
-                <td>{{ r.id }}</td>
+                <td>{{ r.user_history_id }}</td>
                 <td><img src="{{ url_for('static', filename='uploads/' + r.filename) }}" class="thumb" alt="meme"></td>
                 <td>
                     {% if r.is_harmful %}
@@ -70,13 +108,226 @@
                 </td>
                 <td>{{ r.categories_list | join(', ') or '—' }}</td>
                 <td>{{ r.created_at[:19] }}</td>
-                <td><a href="{{ url_for('result', record_id=r.id) }}" class="btn btn-small">View</a></td>
+                <td><a href="{{ url_for('frontend.result', record_id=r.id) }}" class="btn btn-small">View</a></td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p class="empty">No memes have been analysed yet. <a href="{{ url_for('index') }}">Upload one now!</a></p>
+    <p class="empty">
+        No records match your current filters. <a href="{{ url_for('frontend.history') }}">Clear filters</a>
+        or <a href="{{ url_for('frontend.index') }}">upload a new meme</a>.
+    </p>
     {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script id="calendar-dates" type="application/json">{{ (calendar_dates or []) | tojson }}</script>
+<script>
+(() => {
+    const calendarDatesRaw = document.getElementById("calendar-dates");
+    const hasDateSet = new Set(JSON.parse(calendarDatesRaw.textContent || "[]"));
+    const calendarEl = document.getElementById("history-calendar");
+    const monthSelect = document.getElementById("calendar-month");
+    const yearSelect = document.getElementById("calendar-year");
+    const prevBtn = document.getElementById("calendar-prev");
+    const nextBtn = document.getElementById("calendar-next");
+    const selectionEl = document.getElementById("calendar-selection");
+
+    const exactInput = document.getElementById("date");
+    const startInput = document.getElementById("start_date");
+    const endInput = document.getElementById("end_date");
+
+    const monthNames = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    const weekNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    let currentMonth = new Date();
+    currentMonth.setDate(1);
+
+    let startDate = startInput.value || exactInput.value || "";
+    let endDate = endInput.value || "";
+    if (exactInput.value && !startInput.value && !endInput.value) {
+        startDate = exactInput.value;
+        endDate = "";
+    }
+
+    if (startDate) {
+        currentMonth = fromKey(startDate);
+        currentMonth.setDate(1);
+    }
+
+    const dateKey = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+    };
+
+    const fromKey = (key) => {
+        const [y, m, d] = key.split("-").map(Number);
+        return new Date(y, m - 1, d);
+    };
+
+    const inRange = (key, a, b) => {
+        if (!a) return false;
+        if (!b) return key === a;
+        return key >= a && key <= b;
+    };
+
+    const applyInputs = () => {
+        if (!startDate) {
+            exactInput.value = "";
+            startInput.value = "";
+            endInput.value = "";
+            selectionEl.textContent = "No date selected.";
+            return;
+        }
+        if (!endDate || endDate === startDate) {
+            exactInput.value = startDate;
+            startInput.value = "";
+            endInput.value = "";
+            selectionEl.textContent = `Selected date: ${startDate}`;
+            return;
+        }
+        exactInput.value = "";
+        startInput.value = startDate;
+        endInput.value = endDate;
+        selectionEl.textContent = `Selected range: ${startDate} to ${endDate}`;
+    };
+
+    const buildYearOptions = () => {
+        const currentYear = new Date().getFullYear();
+        let minYear = currentYear - 2;
+        let maxYear = currentYear + 2;
+
+        hasDateSet.forEach((key) => {
+            const y = Number((key || "").slice(0, 4));
+            if (!Number.isNaN(y) && y > 0) {
+                if (y < minYear) minYear = y;
+                if (y > maxYear) maxYear = y;
+            }
+        });
+
+        yearSelect.innerHTML = "";
+        for (let y = minYear; y <= maxYear; y++) {
+            const opt = document.createElement("option");
+            opt.value = String(y);
+            opt.textContent = String(y);
+            yearSelect.appendChild(opt);
+        }
+    };
+
+    const buildMonthOptions = () => {
+        monthSelect.innerHTML = "";
+        monthNames.forEach((m, idx) => {
+            const opt = document.createElement("option");
+            opt.value = String(idx);
+            opt.textContent = m;
+            monthSelect.appendChild(opt);
+        });
+    };
+
+    const syncJumpControls = () => {
+        monthSelect.value = String(currentMonth.getMonth());
+        yearSelect.value = String(currentMonth.getFullYear());
+    };
+
+    const handleDateClick = (clicked) => {
+        if (!startDate || (startDate && endDate)) {
+            startDate = clicked;
+            endDate = "";
+        } else if (!endDate) {
+            if (clicked < startDate) {
+                endDate = startDate;
+                startDate = clicked;
+            } else if (clicked === startDate) {
+                endDate = "";
+            } else {
+                endDate = clicked;
+            }
+        }
+        applyInputs();
+        renderCalendar();
+    };
+
+    const renderCalendar = () => {
+        syncJumpControls();
+        calendarEl.innerHTML = "";
+
+        weekNames.forEach((name) => {
+            const w = document.createElement("div");
+            w.className = "calendar-weekday";
+            w.textContent = name;
+            calendarEl.appendChild(w);
+        });
+
+        const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+        let offset = firstDay.getDay() - 1;
+        if (offset < 0) offset = 6;
+
+        const daysInMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
+
+        for (let i = 0; i < offset; i++) {
+            const empty = document.createElement("div");
+            empty.className = "calendar-cell calendar-empty";
+            calendarEl.appendChild(empty);
+        }
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const d = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+            const key = dateKey(d);
+            const cell = document.createElement("button");
+            cell.type = "button";
+            cell.className = "calendar-cell calendar-day";
+            cell.textContent = String(day);
+            cell.dataset.date = key;
+
+            if (hasDateSet.has(key)) {
+                cell.classList.add("has-record");
+            } else {
+                cell.classList.add("no-record");
+            }
+            if (inRange(key, startDate, endDate)) {
+                cell.classList.add("selected");
+            }
+
+            cell.addEventListener("click", () => handleDateClick(key));
+            calendarEl.appendChild(cell);
+        }
+    };
+
+    prevBtn.addEventListener("click", () => {
+        currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+        renderCalendar();
+    });
+
+    nextBtn.addEventListener("click", () => {
+        currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+        renderCalendar();
+    });
+
+    monthSelect.addEventListener("change", () => {
+        const month = Number(monthSelect.value);
+        const year = Number(yearSelect.value);
+        currentMonth = new Date(year, month, 1);
+        renderCalendar();
+    });
+
+    yearSelect.addEventListener("change", () => {
+        const month = Number(monthSelect.value);
+        const year = Number(yearSelect.value);
+        currentMonth = new Date(year, month, 1);
+        renderCalendar();
+    });
+
+    buildYearOptions();
+    buildMonthOptions();
+    applyInputs();
+    renderCalendar();
+})();
+</script>
 {% endblock %}

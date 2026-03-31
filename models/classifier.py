@@ -301,3 +301,5 @@ def _build_justification(is_harmful, score, matched_categories,
         )
 
     return "\n".join(parts)
+
+

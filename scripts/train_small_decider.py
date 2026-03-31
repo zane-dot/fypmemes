@@ -71,13 +71,17 @@ def main():
     nums = np.array([_num_vec(r) for r in rows], dtype=float)
     labels = np.array([int(r.get("label", 0)) for r in rows], dtype=int)
 
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    min_class_count = int(counts.min()) if len(counts) > 0 else 0
+    stratify_labels = labels if (len(unique_labels) > 1 and min_class_count >= 2) else None
+
     X_train_text, X_test_text, X_train_num, X_test_num, y_train, y_test = train_test_split(
         texts,
         nums,
         labels,
         test_size=args.test_size,
         random_state=args.seed,
-        stratify=labels if len(set(labels.tolist())) > 1 else None,
+        stratify=stratify_labels,
     )
 
     vectorizer = TfidfVectorizer(

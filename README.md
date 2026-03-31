@@ -1,6 +1,6 @@
 # Harmful Meme Detection System
 
-An automated system that analyses both the visual and textual content of memes to detect harmful material. Powered by **Large Language Models (LLM)** combined with image processing and text extraction.
+This project implements an automated harmful-meme detection system for memes that combine images and concise text. The system jointly analyses visual content, textual content, and their correlation to produce a harmful/non-harmful decision with a clear evidence-based justification.
 
 ![Screenshot](https://github.com/user-attachments/assets/1658aea8-bb4a-401b-a59e-a460eaed731d)
 
@@ -9,7 +9,7 @@ An automated system that analyses both the visual and textual content of memes t
 - **Image Processing** – Extracts visual features (colours, contrast, text-region detection) and performs OCR via a three-stage pipeline: (1) Vision API using a multimodal LLM, (2) EasyOCR with image preprocessing (5 passes), (3) pytesseract fallback. Supports both English and Chinese text.
 - **LLM Analysis** – Sends extracted text and image features to an OpenAI-compatible LLM for deep contextual analysis. When `OPENAI_VISION_MODEL` is set (or when OCR fails with a text region detected), the image is sent **directly** to a vision-capable model — the approach used by most harmful-meme detection platforms — which reads embedded text and analyses harm in a single pass, bypassing OCR limitations entirely.
 - **Harmfulness Classification** – Produces a harmful / not-harmful verdict with a 0–1 score.
-- **Justification** – Generates a detailed, human-readable explanation of why a meme is (or is not) harmful.
+- **Justification** – Generates a detailed, evidence-based explanation of why a meme is (or is not) harmful, grounded in OCR text and image signals.
 - **History** – All analyses are stored in an SQLite database and viewable in the web UI.
 - **ExplainHM-style Pipeline** – Uses a three-act workflow: (1) debate generation, (2) LLM judge decision, (3) optional small-model refinement.
 
@@ -50,28 +50,18 @@ Open <http://127.0.0.1:5000> in your browser, upload a meme image, and view the 
 
 ```
 fypmemes/
-├── app.py                          # Flask web application
+├── app.py                          # Entry point (loads app factory)
+├── backend/
+│   ├── app_factory.py              # App creation and blueprint registration
+│   ├── routes/analysis.py          # Backend API routes (/api/*)
+│   └── services/analysis_service.py# Shared analysis service logic
+├── frontend/routes.py              # Frontend page routes
 ├── config.py                       # Configuration (paths, limits, LLM settings)
-├── requirements.txt                # Python dependencies
-├── models/
-│   ├── database.py                 # SQLite database models
-│   └── classifier.py               # Harmfulness classifier (LLM + keyword fallback)
-├── processors/
-│   ├── image_processor.py          # Image feature extraction & OCR
-│   ├── text_processor.py           # Keyword/pattern-based text analysis
-│   └── llm_processor.py            # LLM-based content analysis
-├── data/
-│   └── harmful_keywords.json       # Curated harmful keywords & regex patterns
+├── models/                         # DB and classifier modules
+├── processors/                     # OCR / image / text processing modules
 ├── templates/                      # Jinja2 HTML templates
-├── static/css/                     # Stylesheet
-└── tests/                          # pytest test suite
-```
-
-## Running Tests
-
-```bash
-pip install pytest
-python -m pytest tests/ -v
+├── static/                         # CSS and uploaded files
+└── scripts/                        # Optional training/data preparation scripts
 ```
 
 ## Configuration

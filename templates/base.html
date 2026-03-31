@@ -8,10 +8,17 @@
 </head>
 <body>
     <nav class="navbar">
-        <a href="{{ url_for('index') }}" class="brand">🛡️ Meme Detector</a>
+        <a href="{{ url_for('frontend.index') }}" class="brand">🛡️ Meme Detector</a>
         <div class="nav-links">
-            <a href="{{ url_for('index') }}">Upload</a>
-            <a href="{{ url_for('history') }}">History</a>
+            {% if g.user %}
+            <a href="{{ url_for('frontend.index') }}">Upload</a>
+            <a href="{{ url_for('frontend.history') }}">History</a>
+            <span class="user-pill">{{ g.user.username }}</span>
+            <a href="{{ url_for('frontend.logout') }}">Logout</a>
+            {% else %}
+            <a href="{{ url_for('frontend.login') }}">Login</a>
+            <a href="{{ url_for('frontend.register') }}">Register</a>
+            {% endif %}
         </div>
     </nav>
     <main class="container">
@@ -27,5 +34,6 @@
     <footer class="footer">
         <p>Harmful Meme Detection System &mdash; Powered by LLM + Image &amp; Text Analysis</p>
     </footer>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -474,6 +474,10 @@ Rules:
 - Be precise and fair. Not every meme with strong language is harmful.
 - Consider context, sarcasm, and satire.
 - Always provide a thorough justification regardless of the classification.
+- Justification MUST cite concrete evidence from the provided inputs.
+- If quoting text, quote only text actually present in OCR input.
+- If OCR text is missing or uncertain, explicitly state that limitation instead of inventing details.
+- Avoid vague claims like "may be harmful" without explaining the specific trigger.
 - Return ONLY valid JSON, no markdown fences, no extra text.
 """
 
@@ -518,6 +522,12 @@ Input includes:
 - harmful_argument
 
 Choose which side is more convincing and output a final decision.
+
+Judging rules:
+- Base the decision only on supplied evidence (OCR text, image features, debate arguments, optional image).
+- Prefer specific references over abstract wording.
+- If evidence is weak or missing, state uncertainty clearly and lower the harm score.
+- Do not fabricate unseen entities, quotes, or context.
 
 Return ONLY JSON with EXACT keys:
 {

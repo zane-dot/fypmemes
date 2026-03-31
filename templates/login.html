@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Login - Harmful Meme Detector{% endblock %}
+{% block content %}
+<section class="auth-section">
+    <h1>Login</h1>
+    <p class="auth-subtitle">Sign in to analyse memes and keep your personal detection history.</p>
+
+    <form action="{{ url_for('frontend.login') }}" method="post" class="auth-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" minlength="3" maxlength="40" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" minlength="6" required>
+
+        <button type="submit" class="btn btn-primary">Login</button>
+    </form>
+
+    <p class="auth-switch">No account yet? <a href="{{ url_for('frontend.register') }}">Create one</a>.</p>
+</section>
+{% endblock %}
